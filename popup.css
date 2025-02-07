@@ -1,0 +1,165 @@
+body {
+    font-family: Helvetica, sans-serif;
+    margin: 0;
+    padding: 10px;
+    width: 400px;
+    height: 500px;
+    box-sizing: border-box;
+
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+    color: #0E69CB;
+}
+
+content {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.actions {
+    display: flex;
+    gap: 10px;
+}
+
+.status-container {
+    width: 200px;
+}
+
+.status {
+    font-size: 0.9em;
+    color: #555;
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.status.iserror {
+    color: #d9534f;
+    background-color: #f8d7da;
+}
+
+.footer {
+    font-size: 0.9em;
+    padding: 10px;
+    border-radius: 5px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    display: none;
+    flex-shrink: 0;
+}
+
+.footer.error-message {
+    color: #d9534f;
+    background-color: #f8d7da;
+    display: block;
+}
+
+
+.table-update-time {
+    font-style: italic;
+}
+
+/* Element Styles */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+
+th,
+td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+
+th {
+    background-color: #f4f4f4;
+}
+
+
+.login {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    gap: 10px;
+    text-align: center;
+
+    background-color: #ffffff;
+    border: 2px solid #cccccc;
+    border-radius: 8px;
+    padding: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    width: 300px;
+}
+
+
+
+.info {
+    background-color: #f0f8ff;
+    border: 2px solid #0E69CB;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px auto;
+    text-align: center;
+    max-width: 600px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    margin-bottom: 10px;
+}
+
+.info h2 {
+    color: #0E69CB;
+    font-size: 1.5em;
+    margin-bottom: 10px;
+}
+
+input[type="text"],
+input[type="password"] {
+    width: 50%;
+    padding: 8px;
+    margin: 5px 0;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+.button {
+    color: white;
+    padding: 10px 15px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    width: 100%;
+    text-align: center;
+    transition: background-color 0.3s ease;
+    padding: 4px;
+    margin: 5px 0;
+}
+
+.button-primary {
+    background-color: #0E69CB;
+    width: 50%;
+}
+
+.button-primary:hover {
+    background-color: #45a049;
+}
+
+.button-secondary {
+    background-color: #0E69CB;
+}
+
+.button-secondary:hover {
+    background-color: #4a86c5c7;
+}

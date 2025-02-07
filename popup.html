@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script type="text/javascript" src="popup.js"></script>
+  <link rel="stylesheet" type="text/css" href="popup.css">
+  <title>Wireless Operations Buddy</title>
+</head>
+
+<body>
+  <!-- Header Section -->
+  <header>
+    <h1>Wireless Operations Buddy</h1>
+    <div class="status-container">
+      <span class="status" id="host">Host: N/A</span><br />
+      <span class="status" id="statusText">Status: N/A</span><br />
+      <span class="status" id="last-update">Last update: N/A</span>
+    </div>
+  </header>
+
+  <!-- Content Area -->
+  <main class="info">
+    <actions>
+      <div id="action-section" class="actions" style="display:none;">
+        <span class="status">
+          <h2>Client Analytics</h2>
+        </span>
+        <button class="button button-secondary" id="action1">Get Catalyst Center Data</button>
+        <button class="button button-secondary" id="action2">Get Current WLC State</button>
+        <button class="button button-secondary" id="action3">Send Radio Measurement Request</button>
+      </div>
+    </actions>
+    <content>
+      <div id="content">
+        <div id="info-section">
+          <h1>Please navigate to a Client's 360 view</h1>
+          <h2>I can only provide assistance on Client 360 page within Cisco Catalyst Center.</h2>
+        </div>
+        <div id="login-section" class="login" style="display:none;">
+          <input type="text" id="username" placeholder="Username">
+          <input type="password" id="password" placeholder="Password">
+          <button class="button button-primary" id="login-btn">Login</button>
+        </div>
+      </div>
+      <div id="table-container"></div>
+    </content>
+    <span class="table-update-time" id="updatetimestamp"></span>
+  </main>
+
+
+  <!-- Footer Section -->
+  <footer>
+    <span class="footer" id="errorMessage"></span>
+  </footer>
+
+</body>
+
+</html>
