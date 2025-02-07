@@ -37,7 +37,7 @@ Tested with Google Chrome 132.0.6834.110, Catalyst Center 2.3.7.x, C9800 17.12.x
 
 1. Download
    ```
-   git clone ...
+   git clone https://github.com/CiscoSE/WirelessOperationsBuddy.git
    ```
 
 2. _[Optional]_ Add the following applet into your C9800 configuration
