@@ -64,10 +64,10 @@ function processPopupMessage(action, value = null) {
       break;
     case 'set-api-token':
       apiToken = value;
-      chrome.storage.session.set({ api_token: apiToken });
+      chrome.storage.session.set({ "api_token": apiToken });
       break;
     case 'reset-api-token':
-      chrome.storage.session.set({ api_token: null });
+      chrome.storage.session.set({ "api_token": null });
       break;
   }
 }

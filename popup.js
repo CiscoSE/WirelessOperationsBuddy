@@ -199,13 +199,24 @@ function generateAPIToken() {
 
 
 function validateToken(host, token) {
-  fetch("https://" + host + "/api/system/v1/maglev/release/current", {
+  const catc_2_3_x = `https://${host}/api/system/v1/maglev/release/current`;
+  const catc_3_1_x = `https://${host}/api/v1/system-orchestrator/software-management/releases/installed`;
+
+  const fetchOptions = {
     method: 'GET',
     headers: {
       'X-Auth-Token': token,
-      'Content-Type': 'application/json' // Include other headers as necessary
+      'Content-Type': 'application/json'
     },
     credentials: 'omit'
+  };
+
+  fetch(catc_2_3_x, fetchOptions).then(response => {
+    if (!response.ok) {
+      return fetch(catc_3_1_x, fetchOptions);
+    } else {
+      return response.json();
+    }
   }).then(response => {
     if (!response.ok) {
       displayErrorMessage(response.statusText);
