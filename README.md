@@ -31,7 +31,7 @@ Once logged in you will be presented with 3 actions you can execute.
 
 ### Versions
 
-Tested with Google Chrome 132.0.6834.110, Catalyst Center 2.3.7.x, C9800 17.12.x
+Tested with Google Chrome 144.0.7559.109, Catalyst Center 2.3.7.x and 3.1.6, C9800 17.18.x
 
 ### Steps
 
