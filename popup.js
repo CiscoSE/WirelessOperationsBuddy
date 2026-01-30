@@ -183,7 +183,6 @@ function generateAPIToken() {
       }
       // Token generated
       token = data.Token;
-
       updateStatus("Token generated");
       showActionButton();
       // also store token
@@ -215,7 +214,7 @@ function validateToken(host, token) {
     if (!response.ok) {
       return fetch(catc_3_1_x, fetchOptions);
     } else {
-      return response.json();
+      return response;
     }
   }).then(response => {
     if (!response.ok) {
