@@ -21,8 +21,13 @@ Author: shoneder@cisco.com
 const timeoutDuration = 15000; // 5 seconds
 const millisecondsInADay = 24 * 60 * 60 * 1000;
 
+const buddyURLs = {
+  'clientDetailUrl': '/dna/assurance/client/details',
+  'deviceAssuranceUrl': '/dna/assurance/device/details',
+  'deviceProvisioningUrl': '/dna/provision/devices/inventory/device-details'
+}
+
 const tokenURL = 'https://<HOST>/api/system/v1/auth/token';
-const clientDetailUrl = '/dna/assurance/client/details';
 const clientScanReportUrl = '/api/assurance/v1/host/<MAC>/ios-neighbor-aps';
 const clientDisconnectUrl = '/api/assurance/v1/host/<MAC>/ios-disconnect-events?&entityName=macAddr&startTime=<EPOCH-START>&endTime=<EPOCH-END>';
 const clientUrl = '/dna/intent/api/v1/client-detail?macAddress=<MAC>';
@@ -32,6 +37,7 @@ const networkDeviceIPUrl = '/dna/intent/api/v1/network-device?managementIpAddres
 const networkDeviceIdUrl = '/dna/intent/api/v1/network-device/'
 const taskUrl = '/api/v1/task/<TASK-ID>';
 const fileUrl = '/dna/intent/api/v1/file/<FILE-ID>';
+const configArchiveUrl = '/api/v1/archive-config?filterById=<DEVICE-ID>&sortBy=createdTime&order=des'
 
 var responsePending = false;
 var timeout = null;
@@ -41,8 +47,7 @@ var token = undefined;
 
 // once popup is loaded, execute the following
 document.addEventListener('DOMContentLoaded', function () {
-
-  // Verify if we are on a Client360 Page, otherwise inform
+  // Verify if we are on a Client360/Device360 Page, otherwise inform
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
     const url = activeTab.url
@@ -51,7 +56,7 @@ document.addEventListener('DOMContentLoaded', function () {
     updateHost(host);
 
     // Check if the active tab's URL matches the specific site
-    if (url.includes(clientDetailUrl)) {
+    if (Object.values(buddyURLs).some(supportedUrl => url.includes(supportedUrl))) {
       // if we are, display the login and check if a token exists
       showLogin();
 
@@ -67,6 +72,7 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('action2').addEventListener('click', handleClientDetailQueries);
   document.getElementById('action3').addEventListener('click', handleClientDetailQueries);
   document.getElementById('login-btn').addEventListener('click', generateAPIToken);
+  document.getElementById('device-action1').addEventListener('click', handleDeviceDetails);
 
   resizePopup();
   window.addEventListener('resize', resizePopup);
@@ -87,7 +93,7 @@ function handleClientDetailQueries(event) {
     const urlParams = new URLSearchParams(new URL(activeTab.url).search);
 
     // Check if the active tab's URL matches the specific site
-    if (url.includes(clientDetailUrl)) {
+    if (url.includes(buddyURLs.clientDetailUrl)) {
 
       // query the API for scan reports and more
       if (host && token) {
@@ -109,6 +115,45 @@ function handleClientDetailQueries(event) {
       }
     } else {
       updateStatus("Please Go To Client360 Page");
+    }
+    clearTimeout(timeout);
+  });
+}
+
+// Common Handler for the Device Details Buttons
+function handleDeviceDetails(event) {
+  updateStatus("Validating request...");
+  displayErrorMessage("")
+
+  timeout = setTimeout(() => {
+    displayErrorMessage("Request not successfull after " + timeoutDuration / 1000 + " seconds.");
+  }, timeoutDuration);
+
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const activeTab = tabs[0];
+    const url = activeTab.url
+    const urlParams = new URLSearchParams(new URL(activeTab.url).search);
+
+    // Check if the active tab's URL matches the specific site
+    if (url.includes(buddyURLs.deviceAssuranceUrl) || url.include(buddyURLs.deviceProvisioningUrl)) {
+      // query the API for scan reports and more
+      if (host && token) {
+        updateStatus("Checking device details...")
+        const eventId = event.target.id;
+        switch (eventId) {
+          case 'device-action1':
+            console.log("called for config archive load")
+            deviceId = urlParams.get('deviceId');
+            if (deviceId == null)
+              deviceId = urlParams.get('id');
+            loadConfigArchive(deviceId);
+            break;
+        }
+      } else {
+        updateStatus("Token or Host undefined", isError = true);
+      }
+    } else {
+      updateStatus("Please Go To Device360 Page");
     }
     clearTimeout(timeout);
   });
@@ -147,8 +192,30 @@ chrome.runtime.onMessage.addListener(
   }
 );
 
+/**
+ * Verify the current tab URL and display
+ * proper Actions
+ * 
+ * @returns URL, or False
+ */
+function showActions() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const activeTab = tabs[0];
+    const url = activeTab.url
+    if (url.includes(buddyURLs.clientDetailUrl)) {
+      showActionButton();
+    } else {
+      showDeviceActionButton();
+    }
+  });
+}
+
+
 
 // FUNCTIONALITY
+/**
+ * Use ${token_url} to receive token
+ */
 function generateAPIToken() {
   let token_url = tokenURL.replace("<HOST>", host);
   const username = document.getElementById('username').value;
@@ -184,7 +251,7 @@ function generateAPIToken() {
       // Token generated
       token = data.Token;
       updateStatus("Token generated");
-      showActionButton();
+      showActions();
       // also store token
       chrome.runtime.sendMessage(chrome.runtime.id, { type: "popup", action: "set-api-token", value: token });
     })
@@ -196,7 +263,12 @@ function generateAPIToken() {
     });
 }
 
-
+/**
+ * Verify if the current stored token is actually still valid
+ * 
+ * @param {string} host - Catalyst Center Host - IP Address/FQDN
+ * @param {string} token - X-Auth Token generated in login procedure
+ */
 function validateToken(host, token) {
   const catc_2_3_x = `https://${host}/api/system/v1/maglev/release/current`;
   const catc_3_1_x = `https://${host}/api/v1/system-orchestrator/software-management/releases/installed`;
@@ -228,7 +300,7 @@ function validateToken(host, token) {
     .then(data => {
       if (!errorState) {
         updateStatus("Token valid");
-        showActionButton();
+        showActions();
       }
     })
     .catch(error => {
@@ -240,9 +312,16 @@ function validateToken(host, token) {
     });
 }
 
-// Load from Catalyst Center Details (ios-neighbor, ios-disconnect-reason)
-// for specific MAC and display result
-// can be useful for Samsung/Intel/MacBook as the iOS Analytics tab is not shown
+
+
+
+/**
+ * Load from Catalyst Center Details (ios-neighbor, ios-disconnect-reason)
+ * for specific MAC and display result
+ * can be useful for Samsung/Intel/MacBook as the iOS Analytics tab is not shown
+ * 
+ * @param {string} mac - the wireless client MAC we are getting additional information 
+ */
 async function getClientDetails(mac) {
   cleanTable();
   data = await getRequest(clientScanReportUrl.replace('<MAC>', mac));
@@ -257,14 +336,20 @@ async function getClientDetails(mac) {
 
 }
 
-// Query the WLC for the current Scan Report information
-// on WLC direct and display data
-// this involves multiple steps
-// a.) finding the proper Client -> AP -> WLC relation ship
-// b.) use command runner to query the WLC data (execute, task, result)
-// c.) parsing WLC data
-// d.) enriching data (BSSID => AP Name)
-// e.) displaying data
+
+/**
+ * 
+ * Query the WLC for the current Scan Report information
+ * on WLC direct and display data
+ * this involves multiple steps
+ * a.) finding the proper Client -> AP -> WLC relation ship
+ * b.) use command runner to query the WLC data (execute, task, result)
+ * c.) parsing WLC data
+ * d.) enriching data (BSSID => AP Name)
+ * e.) displaying data
+ * @param {string} mac Client MAC Address
+ * @returns 
+ */
 async function getWLCScanReport(mac) {
   var wlcUuid = undefined;
 
@@ -311,6 +396,12 @@ async function getWLCScanReport(mac) {
 
 }
 
+/**
+ * Leverage the Command Runner to trigger Scan Report
+ * Request towards client and collect data afterwards
+ * @param {string} mac Client MAC Address
+ * @returns 
+ */
 async function sendAndGetWLCScanReport(mac) {
   var wlcUuid = undefined;
 
@@ -516,13 +607,89 @@ async function enhanceAndRenderWLCScanReport(scanReportList) {
   renderResponseTable(scanReportList, type = "wlc-scan");
 }
 
+// Device360 / DeviceDetails
+
+async function loadConfigArchive(deviceUuid) {
+  updateStatus("Loading config archive of device...");
+  cleanTable();
+  data = await getRequest(configArchiveUrl.replace('<DEVICE-ID>', deviceUuid));
+  if (data) {
+    // prepare response data for display
+    if (!data?.archiveResultlist?.[0]?.deviceId == deviceUuid) {
+      errorState = True;
+      updateStatus("Loading Config Archive failed...");
+      displayErrorMessage("Could not locate Config Archive for Device");
+      return
+    }
+    deviceName = data?.archiveResultlist?.[0]?.deviceName;
+    deviceEntry = data?.archiveResultlist?.[0];
+    updateStatus(`Loaded ${deviceEntry.versions.length} configs`)
+
+    renderData = flattenArchiveResponse(deviceEntry);
+    renderResponseTable(renderData, type = "config-archive");
+  }
+}
+
+function flattenArchiveResponse(deviceEntry = {}) {
+  const { deviceId, deviceName, ipAddress, versions = [] } = deviceEntry;
+
+  return versions.map(version => {
+    const fileMap = Object.fromEntries(
+      (version.files || []).map(file => [file.fileType, file])
+    );
+
+    return {
+      deviceId: deviceId ?? null,
+      deviceName: deviceName ?? null,     // optional but handy
+      ipAddress: ipAddress ?? null,       // optional
+      versionId: version.id ?? null,      // optional
+      createdTime: version.createdTime ?? null,
+      startupDownloadPath: fileMap.STARTUPCONFIG?.downloadPath ?? null,
+      startupChangeMagnitude: fileMap.STARTUPCONFIG?.changeMagnitude ?? null,
+      runningDownloadPath: fileMap.RUNNINGCONFIG?.downloadPath ?? null,
+      runningChangeMagnitude: fileMap.RUNNINGCONFIG?.changeMagnitude ?? null,
+      userName: version.syslogConfigEventDto?.userName ?? null
+    };
+  });
+}
+
+function getMagnitudeIcon(magnitudeStr) {
+  const value = Number.parseFloat(magnitudeStr ?? '0'); // safe parse
+  if (Number.isNaN(value)) {
+    return { icon: '⚪ NaN', color: '#9ea1b4', label: 'Unknown' };
+  }
+
+  if (value === 0) {
+    return { icon: '🟢 No Change', color: '#22c55e', label: 'No change' };
+  }
+
+  if (value < 5) {
+    return { icon: '🟡 Minor', color: '#facc15', label: 'Minor change' };
+  }
+
+  if (value < 10) {
+    return { icon: '🟠 Moderate', color: '#fb923c', label: 'Moderate change' };
+  }
+
+  return { icon: '🔴 Major', color: '#f87171', label: 'Major change' };
+}
+
+function getFileDownloadLink(deviceUuid, version, filePath) {
+  const link = document.createElement('a');
+  link.href = `https://${host}/api/v1/archive-config/network-device/${deviceUuid}/version/${version}${filePath}?processed=false`;
+  link.textContent = '💾';
+  link.target = '_blank';          // optional
+  link.rel = 'noopener noreferrer'; // optional safety best practice
+  return link;
+}
+
+
 // Helper functions for Popup
 function cleanTable() {
   const container = document.getElementById('table-container');
   container.textContent = "";
   updateRenderTimestamp('');
 }
-
 
 function renderResponseTable(data, type = "catc-scan") {
   switch (type) {
@@ -537,6 +704,10 @@ function renderResponseTable(data, type = "catc-scan") {
     case 'catc-disconnect':
       keysToDisplay = ['apName', 'name', 'timestamp', 'location'];
       keysToDisplayNames = ['AP Name', 'Failure Reason', 'Timestamp', 'Location'];
+      break;
+    case 'config-archive':
+      keysToDisplay = ['createdTime', 'userName', 'startupChangeMagnitude', 'startupDownloadPath', 'runningChangeMagnitude', 'runningDownloadPath'];
+      keysToDisplayNames = ['Timestamp', 'User', 'Startup Changes', '💾', 'Running Changes', '💾'];
       break;
   }
 
@@ -563,11 +734,21 @@ function renderResponseTable(data, type = "catc-scan") {
     responsedata.forEach(item => {
       const row = document.createElement('tr');
       keysToDisplay.forEach(key => {
-        const td = document.createElement('td');
-        if (key == 'timestamp' || key == 'received_time') {
+        var td = document.createElement('td');
+        if (key == 'timestamp' || key == 'received_time' || key == 'createdTime') {
           td.textContent = item[key] !== undefined ? formatTime(item[key]) : ''; // Safely handle missing keys
         } else {
-          td.textContent = item[key] !== undefined ? item[key] : ''; // Safely handle missing keys
+          if (key.includes("Magnitude")) {
+            td.textContent = item[key] !== undefined ? getMagnitudeIcon(item[key]).icon : ''; // Safely handle missing keys
+          } else {
+            if (key.includes("DownloadPath")) {
+              a = getFileDownloadLink(item.deviceId, item.versionId, item[key]);
+              td.appendChild(a);
+            } else {
+              td.textContent = item[key] !== undefined ? item[key] : ''; // Safely handle missing keys  
+            }
+          }
+
         }
         row.appendChild(td);
       });
@@ -576,7 +757,7 @@ function renderResponseTable(data, type = "catc-scan") {
     });
     container.appendChild(table);
     updateRenderTimestamp("Result rendered@" + formatTime(Date.now()));
-    updateStatus("Client Details loaded")
+    updateStatus("Details loaded")
   } else {
     updateStatus("No additional Details available", isError = true);
   }
@@ -628,7 +809,6 @@ function resizePopup() {
   document.body.style.width = `${popupWidth}px`;
   document.body.style.height = `${popupHeight}px`;
 }
-
 
 function updateStatus(message, isError = false) {
   const status = document.getElementById('statusText');
@@ -871,6 +1051,7 @@ function showLogin() {
   document.getElementById('info-section').style.display = 'none'
   document.getElementById('login-section').style.display = 'block'
   document.getElementById('action-section').style.display = 'none'
+  document.getElementById('device-action-section').style.display = 'none'
 }
 
 function showActionButton() {
@@ -878,4 +1059,13 @@ function showActionButton() {
   document.getElementById('info-section').style.display = 'none'
   document.getElementById('login-section').style.display = 'none'
   document.getElementById('action-section').style.display = 'flex'
+  document.getElementById('device-action-section').style.display = 'none'
+}
+
+function showDeviceActionButton() {
+  displayErrorMessage();
+  document.getElementById('info-section').style.display = 'none'
+  document.getElementById('login-section').style.display = 'none'
+  document.getElementById('action-section').style.display = 'none'
+  document.getElementById('device-action-section').style.display = 'flex'
 }
