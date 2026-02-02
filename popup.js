@@ -135,7 +135,7 @@ function handleDeviceDetails(event) {
     const urlParams = new URLSearchParams(new URL(activeTab.url).search);
 
     // Check if the active tab's URL matches the specific site
-    if (url.includes(buddyURLs.deviceAssuranceUrl) || url.include(buddyURLs.deviceProvisioningUrl)) {
+    if (url.includes(buddyURLs.deviceAssuranceUrl) || url.includes(buddyURLs.deviceProvisioningUrl)) {
       // query the API for scan reports and more
       if (host && token) {
         updateStatus("Checking device details...")
@@ -608,7 +608,6 @@ async function enhanceAndRenderWLCScanReport(scanReportList) {
 }
 
 // Device360 / DeviceDetails
-
 async function loadConfigArchive(deviceUuid) {
   updateStatus("Loading config archive of device...");
   cleanTable();
@@ -630,6 +629,47 @@ async function loadConfigArchive(deviceUuid) {
   }
 }
 
+/**
+ * Function called as part of Button Event Listener
+ * to download file.
+ */
+async function downloadConfigFileVersion(btn, deviceUuid, versionId, fileId, deviceName, type, timestamp) {
+  btn.disabled = true;
+  btn.textContent = '⏳...';
+  downloadUrl = `/api/v1/archive-config/network-device/${deviceUuid}/version/${versionId}/file/${fileId}?processed=true`;
+  fileData = await getRequest(downloadUrl, returnAsText = true);
+  if (!fileData) {
+    updateStatus("No Data in Response found", isError = true);
+    return;
+  }
+  try {
+    const blob = new Blob([fileData], { type: 'text/plain' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    // Trigger the download
+    const tempLink = document.createElement('a');
+    const time = formatTime(timestamp, 'yyyy-mm-dd_hh-MM');
+    const fileName = `${deviceName}_${time}_${type}.cfg`;
+    tempLink.href = blobUrl;
+    tempLink.download = fileName;
+    document.body.appendChild(tempLink);
+    tempLink.click();
+
+    // Cleanup
+    document.body.removeChild(tempLink);
+    URL.revokeObjectURL(blobUrl);
+
+
+  } catch (error) {
+    console.error('Download failed:', error);
+    updateStatus("Error during download", true);
+  } finally {
+    // 4. Re-enable button and restore original icon/text
+    btn.disabled = false;
+    btn.textContent = '💾';
+  }
+}
+
 function flattenArchiveResponse(deviceEntry = {}) {
   const { deviceId, deviceName, ipAddress, versions = [] } = deviceEntry;
 
@@ -640,13 +680,13 @@ function flattenArchiveResponse(deviceEntry = {}) {
 
     return {
       deviceId: deviceId ?? null,
-      deviceName: deviceName ?? null,     // optional but handy
-      ipAddress: ipAddress ?? null,       // optional
-      versionId: version.id ?? null,      // optional
+      deviceName: deviceName ?? null,
+      ipAddress: ipAddress ?? null,
+      versionId: version.id ?? null,
       createdTime: version.createdTime ?? null,
-      startupDownloadPath: fileMap.STARTUPCONFIG?.downloadPath ?? null,
+      startupFileId: fileMap.STARTUPCONFIG?.fileId ?? null,
       startupChangeMagnitude: fileMap.STARTUPCONFIG?.changeMagnitude ?? null,
-      runningDownloadPath: fileMap.RUNNINGCONFIG?.downloadPath ?? null,
+      runningFileId: fileMap.RUNNINGCONFIG?.fileId ?? null,
       runningChangeMagnitude: fileMap.RUNNINGCONFIG?.changeMagnitude ?? null,
       userName: version.syslogConfigEventDto?.userName ?? null
     };
@@ -674,13 +714,13 @@ function getMagnitudeIcon(magnitudeStr) {
   return { icon: '🔴 Major', color: '#f87171', label: 'Major change' };
 }
 
-function getFileDownloadLink(deviceUuid, version, filePath) {
-  const link = document.createElement('a');
-  link.href = `https://${host}/api/v1/archive-config/network-device/${deviceUuid}/version/${version}${filePath}?processed=false`;
-  link.textContent = '💾';
-  link.target = '_blank';          // optional
-  link.rel = 'noopener noreferrer'; // optional safety best practice
-  return link;
+function getFileDownloadButton(deviceUuid, version, fileId, deviceName, type, timestamp) {
+  const btn = document.createElement('button');
+  btn.innerHTML = '💾';
+  btn.addEventListener('click', () => {
+    downloadConfigFileVersion(btn, deviceUuid, version, fileId, deviceName, type, timestamp);
+  });
+  return btn;
 }
 
 
@@ -706,7 +746,7 @@ function renderResponseTable(data, type = "catc-scan") {
       keysToDisplayNames = ['AP Name', 'Failure Reason', 'Timestamp', 'Location'];
       break;
     case 'config-archive':
-      keysToDisplay = ['createdTime', 'userName', 'startupChangeMagnitude', 'startupDownloadPath', 'runningChangeMagnitude', 'runningDownloadPath'];
+      keysToDisplay = ['createdTime', 'userName', 'startupChangeMagnitude', 'startupFileId', 'runningChangeMagnitude', 'runningFileId'];
       keysToDisplayNames = ['Timestamp', 'User', 'Startup Changes', '💾', 'Running Changes', '💾'];
       break;
   }
@@ -741,9 +781,9 @@ function renderResponseTable(data, type = "catc-scan") {
           if (key.includes("Magnitude")) {
             td.textContent = item[key] !== undefined ? getMagnitudeIcon(item[key]).icon : ''; // Safely handle missing keys
           } else {
-            if (key.includes("DownloadPath")) {
-              a = getFileDownloadLink(item.deviceId, item.versionId, item[key]);
-              td.appendChild(a);
+            if (key.includes("FileId")) {
+              btn = getFileDownloadButton(item.deviceId, item.versionId, item[key], item.deviceName, (key.includes('startup') ? 'startup' : 'running'), item.createdTime);
+              td.appendChild(btn);
             } else {
               td.textContent = item[key] !== undefined ? item[key] : ''; // Safely handle missing keys  
             }
@@ -763,6 +803,8 @@ function renderResponseTable(data, type = "catc-scan") {
   }
 
 }
+
+
 
 function formatTime(time, format) {
   time = typeof time == 'number' ? new Date(time) : time;
