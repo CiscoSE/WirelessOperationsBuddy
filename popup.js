@@ -142,7 +142,6 @@ function handleDeviceDetails(event) {
         const eventId = event.target.id;
         switch (eventId) {
           case 'device-action1':
-            console.log("called for config archive load")
             deviceId = urlParams.get('deviceId');
             if (deviceId == null)
               deviceId = urlParams.get('id');
