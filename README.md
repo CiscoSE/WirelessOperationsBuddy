@@ -4,6 +4,7 @@ This sample code is a Chrome Extension that helps you leverage
 additional information for Client Troubleshooting especially
 in case of Client Analytics. It allows you to query scan report data from Catalyst Center as well as from the Wireless Controller with the help of Catalyst Center Command Runner.
 
+![Wireless Operations Buddy extension demo](./sample-buddy.gif)
 
 
 ## Architecture
