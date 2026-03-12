@@ -18,7 +18,7 @@ Author: shoneder@cisco.com
 
 */
 
-const timeoutDuration = 15000; // 5 seconds
+const timeoutDuration = 15000; // 15 seconds
 const millisecondsInADay = 24 * 60 * 60 * 1000;
 
 const buddyURLs = {
@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', function () {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
     const url = activeTab.url
-    urlObj = new URL(url);
+    const urlObj = new URL(url);
     host = urlObj.hostname + (urlObj.port ? ':' + urlObj.port : '');
     updateHost(host);
 
@@ -82,12 +82,13 @@ document.addEventListener('DOMContentLoaded', function () {
 function handleClientDetailQueries(event) {
   updateStatus("Validating request...");
   displayErrorMessage("")
+  errorState = false;
 
   timeout = setTimeout(() => {
     displayErrorMessage("Request not successfull after " + timeoutDuration / 1000 + " seconds.");
   }, timeoutDuration);
 
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
     const activeTab = tabs[0];
     const url = activeTab.url
     const urlParams = new URLSearchParams(new URL(activeTab.url).search);
@@ -101,13 +102,13 @@ function handleClientDetailQueries(event) {
         const eventId = event.target.id;
         switch (eventId) {
           case 'action1':
-            getClientDetails(urlParams.get('macAddress'));
+            await getClientDetails(urlParams.get('macAddress'));
             break;
           case 'action2':
-            getWLCScanReport(urlParams.get('macAddress'));
+            await getWLCScanReport(urlParams.get('macAddress'));
             break;
           case 'action3':
-            sendAndGetWLCScanReport(urlParams.get('macAddress'));
+            await sendAndGetWLCScanReport(urlParams.get('macAddress'));
             break;
         }
       } else {
@@ -124,12 +125,13 @@ function handleClientDetailQueries(event) {
 function handleDeviceDetails(event) {
   updateStatus("Validating request...");
   displayErrorMessage("")
+  errorState = false;
 
   timeout = setTimeout(() => {
     displayErrorMessage("Request not successfull after " + timeoutDuration / 1000 + " seconds.");
   }, timeoutDuration);
 
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
     const activeTab = tabs[0];
     const url = activeTab.url
     const urlParams = new URLSearchParams(new URL(activeTab.url).search);
@@ -142,10 +144,10 @@ function handleDeviceDetails(event) {
         const eventId = event.target.id;
         switch (eventId) {
           case 'device-action1':
-            deviceId = urlParams.get('deviceId');
+            let deviceId = urlParams.get('deviceId');
             if (deviceId == null)
               deviceId = urlParams.get('id');
-            loadConfigArchive(deviceId);
+            await loadConfigArchive(deviceId);
             break;
         }
       } else {
@@ -268,14 +270,14 @@ function generateAPIToken() {
  * @param {string} host - Catalyst Center Host - IP Address/FQDN
  * @param {string} token - X-Auth Token generated in login procedure
  */
-function validateToken(host, token) {
-  const catc_2_3_x = `https://${host}/api/system/v1/maglev/release/current`;
-  const catc_3_1_x = `https://${host}/api/v1/system-orchestrator/software-management/releases/installed`;
+function validateToken(hostParam, tokenParam) {
+  const catc_2_3_x = `https://${hostParam}/api/system/v1/maglev/release/current`;
+  const catc_3_1_x = `https://${hostParam}/api/v1/system-orchestrator/software-management/releases/installed`;
 
   const fetchOptions = {
     method: 'GET',
     headers: {
-      'X-Auth-Token': token,
+      'X-Auth-Token': tokenParam,
       'Content-Type': 'application/json'
     },
     credentials: 'omit'
@@ -323,7 +325,7 @@ function validateToken(host, token) {
  */
 async function getClientDetails(mac) {
   cleanTable();
-  data = await getRequest(clientScanReportUrl.replace('<MAC>', mac));
+  let data = await getRequest(clientScanReportUrl.replace('<MAC>', mac));
   if (data) {
     renderResponseTable(data.response);
   }
@@ -337,7 +339,28 @@ async function getClientDetails(mac) {
 
 
 /**
- * 
+ * Parse the Command Runner file response for WLC scan data.
+ * Returns the parsed scan report list, or null if the response is invalid.
+ * @param {string} fileData - raw text response from the Command Runner file endpoint
+ */
+function processWLCScanData(fileData) {
+  const fileDataJson = JSON.parse(fileData);
+  const keys = Object.keys(fileDataJson[0].commandResponses.SUCCESS);
+  if (!keys || keys.length === 0) {
+    updateStatus("Response in Command Runner invalid", isError = true);
+    return null;
+  }
+  updateStatus("Processing Response...");
+  const tableRecord = fileDataJson[0].commandResponses.SUCCESS[keys[0]];
+  if (!tableRecord) {
+    updateStatus("No Valid response from WLC", isError = true);
+    return null;
+  }
+  return parseTableRecord(tableRecord);
+}
+
+/**
+ *
  * Query the WLC for the current Scan Report information
  * on WLC direct and display data
  * this involves multiple steps
@@ -365,32 +388,18 @@ async function getWLCScanReport(mac) {
   updateStatus("WLC found, executing command");
   //updateStatus("WLC found, executing command is " + wlcUuid);
   // Step b.)
-  wlcMac = convertMacAddressForWLC(mac);
+  let wlcMac = convertMacAddressForWLC(mac);
   wlcMac = wlcMac.replace(/\./g, '%2E');
   const command = "test platform software database get ewlc_oper/client_wsa_info;client_mac=<MAC>".replace('<MAC>', wlcMac);
-  fileData = await commandRunnerForDevice(wlcUuid, [command]);
+  const fileData = await commandRunnerForDevice(wlcUuid, [command]);
   if (!fileData) {
     updateStatus("No Data in Response found", isError = true);
     return;
   }
 
-  // Step c.) parsing file data
-  fileDataJson = JSON.parse(fileData);
-  keys = Object.keys(fileDataJson[0].commandResponses.SUCCESS);
-  if (!keys) {
-    updateStatus("Response in Command Runner invalid", isError = true);
-    return;
-  }
-  updateStatus("Processing Response...");
-  const tableRecord = fileDataJson[0].commandResponses.SUCCESS[keys[0]];
-  if (!tableRecord) {
-    updateStatus("No Valid response from WLC", isError = true);
-    return;
-  }
-  scanReportList = parseTableRecord(tableRecord);
-
-  // Step d.)  enrich data BSSID => AP Name
-  // Step e.) displaying data
+  // Step c.) parse + d.) enrich + e.) render
+  const scanReportList = processWLCScanData(fileData);
+  if (!scanReportList) return;
   enhanceAndRenderWLCScanReport(scanReportList);
 
 }
@@ -418,8 +427,8 @@ async function sendAndGetWLCScanReport(mac) {
   //updateStatus("WLC found, executing command is " + wlcUuid);
   // Step b.)
   // Send request
-  wlcMac = convertMacAddressForWLC(mac);
-  commandSent = await sendRadioMeassurementRequest(wlcMac, wlcUuid);
+  let wlcMac = convertMacAddressForWLC(mac);
+  const commandSent = await sendRadioMeassurementRequest(wlcMac, wlcUuid);
   if (!commandSent) {
     updateStatus("Could not send fresh request, querying for current state", isError = true);
   }
@@ -429,29 +438,15 @@ async function sendAndGetWLCScanReport(mac) {
   // Query response
   wlcMac = wlcMac.replace(/\./g, '%2E');
   const command = "test platform software database get ewlc_oper/client_wsa_info;client_mac=<MAC>".replace('<MAC>', wlcMac);
-  fileData = await commandRunnerForDevice(wlcUuid, [command]);
+  const fileData = await commandRunnerForDevice(wlcUuid, [command]);
   if (!fileData) {
     updateStatus("No Data in Response found", isError = true);
     return;
   }
 
-  // Step c.) parsing file data
-  fileDataJson = JSON.parse(fileData);
-  keys = Object.keys(fileDataJson[0].commandResponses.SUCCESS);
-  if (!keys) {
-    updateStatus("Response in Command Runner invalid", isError = true);
-    return;
-  }
-  updateStatus("Processing Response...");
-  const tableRecord = fileDataJson[0].commandResponses.SUCCESS[keys[0]];
-  if (!tableRecord) {
-    updateStatus("No Valid response from WLC", isError = true);
-    return;
-  }
-  scanReportList = parseTableRecord(tableRecord);
-
-  // Step d.) enrich data BSSID => AP Name
-  // Step e.) render data
+  // Step c.) parse + d.) enrich + e.) render
+  const scanReportList = processWLCScanData(fileData);
+  if (!scanReportList) return;
   enhanceAndRenderWLCScanReport(scanReportList);
 }
 
@@ -468,7 +463,7 @@ async function sendRadioMeassurementRequest(mac, wlcUuid, type = 'table') {
     action 3.0 puts "finished run of catalyst center test command"
   */
   const command = "show wireless client mac-address <MAC> call-info chassis active R0".replace("<MAC>", mac);
-  fileData = await commandRunnerForDevice(wlcUuid, [command]);
+  const fileData = await commandRunnerForDevice(wlcUuid, [command]);
   if (!fileData) {
     updateStatus("No Data in Response found", isError = true);
     return false;
@@ -481,7 +476,7 @@ async function sendRadioMeassurementRequest(mac, wlcUuid, type = 'table') {
 
 async function getWlcForMac(mac) {
   var wlcUuid = undefined;
-  data = await getRequest(clientUrl.replace('<MAC>', mac));
+  const data = await getRequest(clientUrl.replace('<MAC>', mac));
   if (data) {
     const wirelessClient = data?.detail?.hostType;
     if (wirelessClient && wirelessClient == 'WIRELESS') {
@@ -501,12 +496,12 @@ async function getWlcForMac(mac) {
             const lastApId = data?.detail?.connectedDevice[0]?.id;
             const queryUrl = networkDeviceIdUrl + lastApId;
             // get details on AP
-            apdetails = await getRequest(queryUrl);
+            const apdetails = await getRequest(queryUrl);
             const wlcIp = apdetails?.response?.associatedWlcIp;
             // find wlc
             if (wlcIp) {
               const wlcUrl = networkDeviceIPUrl.replace("<IP>", wlcIp);
-              wlcdata = await getRequest(wlcUrl);
+              const wlcdata = await getRequest(wlcUrl);
               if (wlcdata?.response[0]?.family && wlcdata?.response[0]?.family == "Wireless Controller") {
                 wlcUuid = wlcdata?.response[0]?.id;
               }
@@ -526,7 +521,7 @@ async function getWlcForMac(mac) {
 }
 
 async function getAPNameForBssid(bssid) {
-  deviceDetail = await getRequest(networkDeviceMACUrl.replace("<MAC>", bssid));
+  const deviceDetail = await getRequest(networkDeviceMACUrl.replace("<MAC>", bssid));
   if (deviceDetail?.response[0]?.family && deviceDetail?.response[0]?.family == "Unified AP") {
     const value = deviceDetail?.response[0]?.hostname;
     return value;
@@ -534,7 +529,7 @@ async function getAPNameForBssid(bssid) {
 }
 
 async function commandRunnerForDevice(deviceUuid, commands) {
-  payload = {
+  const payload = {
     "description": "Catalyst Center Assistant running Command Runner",
     "name": "catc-assist-runner",
     "commands": commands,
@@ -543,8 +538,8 @@ async function commandRunnerForDevice(deviceUuid, commands) {
   }
 
   // response will be task id
-  taskIdresponse = await postData(commandRunnerUrl, payload);
-  taskId = taskIdresponse?.response?.taskId;
+  const taskIdresponse = await postData(commandRunnerUrl, payload);
+  const taskId = taskIdresponse?.response?.taskId;
   if (!taskId) {
     updateStatus("Could not find Task Id for Command Runner", isError = true);
     return;
@@ -553,14 +548,14 @@ async function commandRunnerForDevice(deviceUuid, commands) {
 
 
   // task id response will be file
-  taskStatus = await checkTaskProgress(taskId);
+  const taskStatus = await checkTaskProgress(taskId);
   if (!taskStatus || taskStatus?.response?.isError) {
     updateStatus("Task did not suceed", isError = true);
     return;
   }
 
   // file will contain data
-  fileId = JSON.parse(taskStatus?.response?.progress)?.fileId;
+  const fileId = JSON.parse(taskStatus?.response?.progress)?.fileId;
   updateStatus("Response received, collecting it...");
 
   if (!fileId) {
@@ -569,7 +564,7 @@ async function commandRunnerForDevice(deviceUuid, commands) {
   }
 
   //loading file
-  fileData = await getRequest(fileUrl.replace("<FILE-ID>", fileId), returnAsText = true);
+  const fileData = await getRequest(fileUrl.replace("<FILE-ID>", fileId), returnAsText = true);
   if (!fileData) {
     updateStatus("No Data in Response found", isError = true);
     return;
@@ -578,20 +573,19 @@ async function commandRunnerForDevice(deviceUuid, commands) {
 }
 
 async function enhanceAndRenderWLCScanReport(scanReportList) {
-  bssid_ap_map = {};
+  const bssid_ap_map = {};
   const unique_bssid = Array.from(
     new Set(scanReportList.map(entry => {
-      baseMac = entry.bssid.slice(0, -1) + "0";
-      baseMac = baseMac.replace(/\./g, '')  // Remove all dots
+      const baseMac = entry.bssid.slice(0, -1) + "0";
+      return baseMac.replace(/\./g, '')  // Remove all dots
         .match(/.{1,2}/g)    // Match every two characters
         .join(':');
-      return baseMac
     })))
 
 
-  for (elem in unique_bssid) {
-    const apname = await getAPNameForBssid(unique_bssid[elem]);
-    bssid_ap_map[unique_bssid[elem]] = apname;
+  for (const bssid of unique_bssid) {
+    const apname = await getAPNameForBssid(bssid);
+    bssid_ap_map[bssid] = apname;
   }
 
   scanReportList.map(scanreport => {
@@ -613,17 +607,17 @@ async function loadConfigArchive(deviceUuid) {
   data = await getRequest(configArchiveUrl.replace('<DEVICE-ID>', deviceUuid));
   if (data) {
     // prepare response data for display
-    if (!data?.archiveResultlist?.[0]?.deviceId == deviceUuid) {
-      errorState = True;
+    if (data?.archiveResultlist?.[0]?.deviceId !== deviceUuid) {
+      errorState = true;
       updateStatus("Loading Config Archive failed...");
       displayErrorMessage("Could not locate Config Archive for Device");
       return
     }
-    deviceName = data?.archiveResultlist?.[0]?.deviceName;
-    deviceEntry = data?.archiveResultlist?.[0];
+    const deviceName = data?.archiveResultlist?.[0]?.deviceName;
+    const deviceEntry = data?.archiveResultlist?.[0];
     updateStatus(`Loaded ${deviceEntry.versions.length} configs`)
 
-    renderData = flattenArchiveResponse(deviceEntry);
+    const renderData = flattenArchiveResponse(deviceEntry);
     renderResponseTable(renderData, type = "config-archive");
   }
 }
@@ -635,8 +629,8 @@ async function loadConfigArchive(deviceUuid) {
 async function downloadConfigFileVersion(btn, deviceUuid, versionId, fileId, deviceName, type, timestamp) {
   btn.disabled = true;
   btn.textContent = '⏳...';
-  downloadUrl = `/api/v1/archive-config/network-device/${deviceUuid}/version/${versionId}/file/${fileId}?processed=true`;
-  fileData = await getRequest(downloadUrl, returnAsText = true);
+  const downloadUrl = `/api/v1/archive-config/network-device/${deviceUuid}/version/${versionId}/file/${fileId}?processed=true`;
+  const fileData = await getRequest(downloadUrl, returnAsText = true);
   if (!fileData) {
     updateStatus("No Data in Response found", isError = true);
     return;
@@ -731,6 +725,8 @@ function cleanTable() {
 }
 
 function renderResponseTable(data, type = "catc-scan") {
+  let keysToDisplay;
+  let keysToDisplayNames;
   switch (type) {
     case 'catc-scan':
       keysToDisplay = ['apName', 'channel', 'RSSI',];
@@ -751,7 +747,7 @@ function renderResponseTable(data, type = "catc-scan") {
   }
 
 
-  responsedata = data;
+  const responsedata = data;
 
   const container = document.getElementById('table-container');
   const status = document.getElementById('table-status');
@@ -781,7 +777,7 @@ function renderResponseTable(data, type = "catc-scan") {
             td.textContent = item[key] !== undefined ? getMagnitudeIcon(item[key]).icon : ''; // Safely handle missing keys
           } else {
             if (key.includes("FileId")) {
-              btn = getFileDownloadButton(item.deviceId, item.versionId, item[key], item.deviceName, (key.includes('startup') ? 'startup' : 'running'), item.createdTime);
+              const btn = getFileDownloadButton(item.deviceId, item.versionId, item[key], item.deviceName, (key.includes('startup') ? 'startup' : 'running'), item.createdTime);
               td.appendChild(btn);
             } else {
               td.textContent = item[key] !== undefined ? item[key] : ''; // Safely handle missing keys  
@@ -872,7 +868,7 @@ function updateHost(hostname) {
 
 }
 
-function displayErrorMessage(message) {
+function displayErrorMessage(message = "") {
   const footer = document.getElementById('errorMessage');
   footer.textContent = message;
   if (message) {
@@ -1009,11 +1005,11 @@ async function getRequest(urlpath = "", returnAsText = false) {
 }
 
 async function postData(urlpath = "", data = {}) {
-  url = "https://" + host + urlpath;
+  const url = "https://" + host + urlpath;
 
   // Default options are marked with *
   try {
-    datastring = JSON.stringify(data);
+    const datastring = JSON.stringify(data);
     let response = await fetch(url, {
       method: "POST",
       mode: "cors",
@@ -1033,7 +1029,7 @@ async function postData(urlpath = "", data = {}) {
       throw new Error('Network response was not ok ' + response.statusText);
     }
 
-    jsonData = response.json();
+    const jsonData = response.json();
     return jsonData; // parses JSON response into native JavaScript objects
   } catch (error) {
     console.error('There was a problem with the URL operation:', error);
@@ -1065,7 +1061,7 @@ async function checkTaskProgress(taskId) {
   const retry = 5;
   const retrytimer = 1000; //in [msec]
   for (let i = 0; i < retry; i++) {
-    taskStatus = await getRequest(urlpath);
+    const taskStatus = await getRequest(urlpath);
     let isError = taskStatus?.response?.isError;
     let endTime = taskStatus?.response?.endTime;
     if (isError) {
