@@ -24,7 +24,8 @@ const millisecondsInADay = 24 * 60 * 60 * 1000;
 const buddyURLs = {
   'clientDetailUrl': '/dna/assurance/client/details',
   'deviceAssuranceUrl': '/dna/assurance/device/details',
-  'deviceProvisioningUrl': '/dna/provision/devices/inventory/device-details'
+  'deviceProvisioningUrl': '/dna/provision/devices/inventory/device-details',
+  'activityTaskUrl': '/dna/activity/tasks'
 }
 
 const tokenURL = 'https://<HOST>/api/system/v1/auth/token';
@@ -38,6 +39,9 @@ const networkDeviceIdUrl = '/dna/intent/api/v1/network-device/'
 const taskUrl = '/api/v1/task/<TASK-ID>';
 const fileUrl = '/dna/intent/api/v1/file/<FILE-ID>';
 const configArchiveUrl = '/api/v1/archive-config?filterById=<DEVICE-ID>&sortBy=createdTime&order=des'
+const scheduledJobBriefUrl = '/api/schedule/v4/scheduled-job/brief?type=DEFAULT,ACTIONABLE&limit=25&sortBy=lastUpdateTime&order=DESC&module=PROVISION&aggregatedStatus=FAILED';
+const deployStatusUrl = '/api/v1/template-programmer/deploy/status/<DEPLOY-ID>';
+const activityInstanceUrl = '/api/schedule/v4/scheduled-job?taskId=<ACTIVITY-ID>';
 
 var responsePending = false;
 var timeout = null;
@@ -73,6 +77,7 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('action3').addEventListener('click', handleClientDetailQueries);
   document.getElementById('login-btn').addEventListener('click', generateAPIToken);
   document.getElementById('device-action1').addEventListener('click', handleDeviceDetails);
+  document.getElementById('activity-action1').addEventListener('click', handleActivityTasks);
 
   resizePopup();
   window.addEventListener('resize', resizePopup);
@@ -160,6 +165,32 @@ function handleDeviceDetails(event) {
   });
 }
 
+// Common Handler for the Activity Tasks Buttons
+function handleActivityTasks(event) {
+  updateStatus("Validating request...");
+  displayErrorMessage("");
+  errorState = false;
+
+  timeout = setTimeout(() => {
+    displayErrorMessage("Request not successful after " + timeoutDuration / 1000 + " seconds.");
+  }, timeoutDuration);
+
+  chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+    const activeTab = tabs[0];
+    const url = activeTab.url;
+    if (url.includes(buddyURLs.activityTaskUrl)) {
+      if (host && token) {
+        await loadFailedJobs();
+      } else {
+        updateStatus("Token or Host undefined", isError = true);
+      }
+    } else {
+      updateStatus("Please Go To Activity Tasks Page");
+    }
+    clearTimeout(timeout);
+  });
+}
+
 // Listener for receiving message to PopUp
 chrome.runtime.onMessage.addListener(
   function (request, sender, sendResponse) {
@@ -205,6 +236,8 @@ function showActions() {
     const url = activeTab.url
     if (url.includes(buddyURLs.clientDetailUrl)) {
       showActionButton();
+    } else if (url.includes(buddyURLs.activityTaskUrl)) {
+      showActivityActionButton();
     } else {
       showDeviceActionButton();
     }
@@ -663,6 +696,107 @@ async function downloadConfigFileVersion(btn, deviceUuid, versionId, fileId, dev
   }
 }
 
+// Activity Tasks
+async function loadFailedJobs() {
+  updateStatus("Loading failed jobs...");
+  cleanTable();
+  const data = await getRequest(scheduledJobBriefUrl);
+  if (data?.response?.length) {
+    renderResponseTable(data.response, 'job-list');
+  } else {
+    updateStatus("No failed jobs found");
+  }
+}
+
+async function loadJobDetails(activityInstanceUuid) {
+  updateStatus("Loading job details...");
+  cleanTable();
+
+  const activityData = await getRequest(activityInstanceUrl.replace('<ACTIVITY-ID>', activityInstanceUuid));
+  if (!activityData) {
+    errorState = true;
+    updateStatus("Loading Job Details failed...", isError = true);
+    displayErrorMessage("Could not locate Job Details for Activity");
+    return;
+  }
+
+
+  const taskId = activityData?.response?.[0]?.triggeredJobs?.[0]?.triggeredJobTaskId;
+  if (!taskId) {
+    updateStatus("Could not retrieve Task ID from Activity", isError = true);
+    displayErrorMessage("Could not locate Job Details for Task");
+    return;
+  }
+
+  // check now if this was a CLI Template provisioning or a Device > Inventory provisioning job
+  const taskSubModule = activityData?.response?.[0]?.paramNamesAndValues?.subModule;
+
+  // can be either "subModule": "TEMPLATES" or "subModule": "DEVICES"
+  // if it is templates, we process it, if it is a provisioning job
+  // we stop and return with an information.
+
+  if (taskSubModule === "DEVICES") {
+    updateStatus("Please use GUI");
+    const container = document.getElementById('table-container');
+    const header = document.createElement('div');
+    header.innerHTML = "<strong>For Provisioning Jobs from Inventory use GUI</strong>";
+    container.appendChild(header);
+
+  } else if (taskSubModule === "TEMPLATES") {
+    const task = await getRequest(taskUrl.replace('<TASK-ID>', taskId));
+    const deployId = task?.response?.data;
+    if (!deployId) {
+      updateStatus("Could not retrieve deploy ID from task", isError = true);
+      displayErrorMessage("Could not locate Deploy Details for Task");
+      return;
+    }
+
+    const deployStatus = await getRequest(deployStatusUrl.replace('<DEPLOY-ID>', deployId));
+    if (!deployStatus) {
+      updateStatus("Could not retrieve deploy status", isError = true);
+      displayErrorMessage("Could not locate Deploy Details for Task");
+      return;
+    }
+
+    const deployment = deployStatus?.[0];
+    if (!deployment) {
+      updateStatus("No deployment information found", isError = true);
+      displayErrorMessage("Could not locate Deploy Details for Task");
+      return;
+    }
+
+
+    const container = document.getElementById('table-container');
+    const header = document.createElement('div');
+    header.innerHTML = `<strong>${deployment.templateName}</strong> &nbsp; ${deployment.startTime}`;
+    const exportBtn = document.createElement('button');
+    exportBtn.className = 'button button-secondary';
+    exportBtn.style.cssText = 'width:auto; margin-left:10px;';
+    exportBtn.textContent = '⬇ Export CSV';
+    exportBtn.addEventListener('click', () => exportDeployDetailsCSV(deployment.templateName, deployment.startTime, deployment.devices));
+    header.appendChild(exportBtn);
+    container.appendChild(header);
+
+    renderResponseTable(deployment.devices, 'job-details');
+    updateStatus("Job details loaded");
+  }
+}
+
+function exportDeployDetailsCSV(jobName, startTime, devices) {
+  const rows = [['Execution Time', 'Job Name', 'Device Name', 'IP Address', 'Status']];
+  devices.forEach(d => rows.push([startTime, jobName, d.name, d.ipAddress, d.status]));
+  const csv = rows.map(r => r.map(v => `"${(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const blobUrl = URL.createObjectURL(blob);
+  const tempLink = document.createElement('a');
+  tempLink.href = blobUrl;
+  tempLink.download = `${jobName}_${formatTime(Date.now(), 'yyyy-mm-dd_hh-MM')}_failed-jobs.csv`;
+  document.body.appendChild(tempLink);
+  tempLink.click();
+  document.body.removeChild(tempLink);
+  URL.revokeObjectURL(blobUrl);
+}
+
 function flattenArchiveResponse(deviceEntry = {}) {
   const { deviceId, deviceName, ipAddress, versions = [] } = deviceEntry;
 
@@ -744,6 +878,14 @@ function renderResponseTable(data, type = "catc-scan") {
       keysToDisplay = ['createdTime', 'userName', 'startupChangeMagnitude', 'startupFileId', 'runningChangeMagnitude', 'runningFileId'];
       keysToDisplayNames = ['Timestamp', 'User', 'Startup Changes', '💾', 'Running Changes', '💾'];
       break;
+    case 'job-list':
+      keysToDisplay = ['description', 'startTime', 'instanceUuid'];
+      keysToDisplayNames = ['Job Name', 'Start Time', 'Load Details'];
+      break;
+    case 'job-details':
+      keysToDisplay = ['name', 'ipAddress', 'status', 'detailedStatusMessage'];
+      keysToDisplayNames = ['Device', 'IP', 'Status', 'Message'];
+      break;
   }
 
 
@@ -770,13 +912,18 @@ function renderResponseTable(data, type = "catc-scan") {
       const row = document.createElement('tr');
       keysToDisplay.forEach(key => {
         var td = document.createElement('td');
-        if (key == 'timestamp' || key == 'received_time' || key == 'createdTime') {
+        if (key == 'timestamp' || key == 'received_time' || key == 'createdTime' || key == 'startTime') {
           td.textContent = item[key] !== undefined ? formatTime(item[key]) : ''; // Safely handle missing keys
         } else {
           if (key.includes("Magnitude")) {
             td.textContent = item[key] !== undefined ? getMagnitudeIcon(item[key]).icon : ''; // Safely handle missing keys
           } else {
-            if (key.includes("FileId")) {
+            if (key === 'instanceUuid') {
+              const btn = document.createElement('button');
+              btn.textContent = 'Details';
+              btn.addEventListener('click', () => loadJobDetails(item[key]));
+              td.appendChild(btn);
+            } else if (key.includes("FileId")) {
               const btn = getFileDownloadButton(item.deviceId, item.versionId, item[key], item.deviceName, (key.includes('startup') ? 'startup' : 'running'), item.createdTime);
               td.appendChild(btn);
             } else {
@@ -1089,6 +1236,7 @@ function showLogin() {
   document.getElementById('login-section').style.display = 'block'
   document.getElementById('action-section').style.display = 'none'
   document.getElementById('device-action-section').style.display = 'none'
+  document.getElementById('activity-action-section').style.display = 'none'
 }
 
 function showActionButton() {
@@ -1105,4 +1253,13 @@ function showDeviceActionButton() {
   document.getElementById('login-section').style.display = 'none'
   document.getElementById('action-section').style.display = 'none'
   document.getElementById('device-action-section').style.display = 'flex'
+}
+
+function showActivityActionButton() {
+  displayErrorMessage();
+  document.getElementById('info-section').style.display = 'none'
+  document.getElementById('login-section').style.display = 'none'
+  document.getElementById('action-section').style.display = 'none'
+  document.getElementById('device-action-section').style.display = 'none'
+  document.getElementById('activity-action-section').style.display = 'flex'
 }
