@@ -42,6 +42,7 @@ const configArchiveUrl = '/api/v1/archive-config?filterById=<DEVICE-ID>&sortBy=c
 const scheduledJobBriefUrl = '/api/schedule/v4/scheduled-job/brief?type=DEFAULT,ACTIONABLE&limit=25&sortBy=lastUpdateTime&order=DESC&module=PROVISION&aggregatedStatus=FAILED';
 const deployStatusUrl = '/api/v1/template-programmer/deploy/status/<DEPLOY-ID>';
 const activityInstanceUrl = '/api/schedule/v4/scheduled-job?taskId=<ACTIVITY-ID>';
+const airsensePcapUrl = '/api/assurance/v1/airsense/packetcaptures?type=airsense_packets_timerange&macAddress=<MAC>&startTime=<START>&endTime=<END>';
 
 var responsePending = false;
 var timeout = null;
@@ -76,14 +77,23 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('action2').addEventListener('click', handleClientDetailQueries);
   document.getElementById('action3').addEventListener('click', handleClientDetailQueries);
   document.getElementById('login-btn').addEventListener('click', generateAPIToken);
+  document.getElementById('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') generateAPIToken(); });
   document.getElementById('device-action1').addEventListener('click', handleDeviceDetails);
   document.getElementById('activity-action1').addEventListener('click', handleActivityTasks);
+  document.getElementById('airsense-action1').addEventListener('click', handleAirsenseDownload);
+  document.getElementById('airsense-quick-30m').addEventListener('click', () => setAirsenseTimeRange(30 * 60 * 1000));
+  document.getElementById('airsense-quick-1h').addEventListener('click', () => setAirsenseTimeRange(60 * 60 * 1000));
+  document.getElementById('airsense-quick-5h').addEventListener('click', () => setAirsenseTimeRange(5 * 60 * 60 * 1000));
 
   resizePopup();
   window.addEventListener('resize', resizePopup);
 }, false);
 
-// Common Handler for the Client Details Query Buttons
+/**
+ * Button handler for Client Analytics actions (action1–action3).
+ * Dispatches to the appropriate client detail query based on the button pressed.
+ * @param {Event} event - the click event from the action button
+ */
 function handleClientDetailQueries(event) {
   updateStatus("Validating request...");
   displayErrorMessage("")
@@ -126,7 +136,11 @@ function handleClientDetailQueries(event) {
   });
 }
 
-// Common Handler for the Device Details Buttons
+/**
+ * Button handler for Device360 actions (device-action1).
+ * Dispatches to the appropriate device detail query based on the button pressed.
+ * @param {Event} event - the click event from the action button
+ */
 function handleDeviceDetails(event) {
   updateStatus("Validating request...");
   displayErrorMessage("")
@@ -165,7 +179,11 @@ function handleDeviceDetails(event) {
   });
 }
 
-// Common Handler for the Activity Tasks Buttons
+/**
+ * Button handler for Activity Tasks actions (activity-action1).
+ * Dispatches to the appropriate activity query based on the button pressed.
+ * @param {Event} event - the click event from the action button
+ */
 function handleActivityTasks(event) {
   updateStatus("Validating request...");
   displayErrorMessage("");
@@ -225,16 +243,18 @@ chrome.runtime.onMessage.addListener(
 );
 
 /**
- * Verify the current tab URL and display
- * proper Actions
- * 
- * @returns URL, or False
+ * Reads the active tab URL and shows the appropriate action section.
+ * Routes to airsense, client analytics, activity tasks, or device actions
+ * based on the current page path and query parameters.
  */
 function showActions() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
-    const url = activeTab.url
-    if (url.includes(buddyURLs.clientDetailUrl)) {
+    const url = activeTab.url;
+    const urlParams = new URLSearchParams(new URL(url).search);
+    if (url.includes(buddyURLs.clientDetailUrl) && urlParams.get('view') === 'airsense') {
+      showAirsenseActionButton(urlParams.get('macAddress'));
+    } else if (url.includes(buddyURLs.clientDetailUrl)) {
       showActionButton();
     } else if (url.includes(buddyURLs.activityTaskUrl)) {
       showActivityActionButton();
@@ -245,10 +265,11 @@ function showActions() {
 }
 
 
-
 // FUNCTIONALITY
+// Overall 
 /**
- * Use ${token_url} to receive token
+ * Reads username/password from the login form and requests an API token
+ * from Catalyst Center. On success, stores the token and shows the action section.
  */
 function generateAPIToken() {
   let token_url = tokenURL.replace("<HOST>", host);
@@ -346,9 +367,7 @@ function validateToken(hostParam, tokenParam) {
     });
 }
 
-
-
-
+// Client 360 / Client Analytics
 /**
  * Load from Catalyst Center Details (ios-neighbor, ios-disconnect-reason)
  * for specific MAC and display result
@@ -369,7 +388,6 @@ async function getClientDetails(mac) {
   }
 
 }
-
 
 /**
  * Parse the Command Runner file response for WLC scan data.
@@ -483,6 +501,15 @@ async function sendAndGetWLCScanReport(mac) {
   enhanceAndRenderWLCScanReport(scanReportList);
 }
 
+/**
+ * Triggers a Radio Measurement Request on the WLC via Command Runner.
+ * Requires an EEM applet configured on the WLC to translate the show command
+ * into an actual scan-report request to the client.
+ * @param {string} mac - client MAC in WLC dot notation (e.g. 1234.5678.ABCD)
+ * @param {string} wlcUuid - device UUID of the WLC in Catalyst Center
+ * @param {string} type - scan report mode (default: 'table')
+ * @returns {boolean} true if the WLC confirmed the request was executed
+ */
 async function sendRadioMeassurementRequest(mac, wlcUuid, type = 'table') {
   // prerequisite for this to work is following config on WLC:
   //
@@ -507,6 +534,13 @@ async function sendRadioMeassurementRequest(mac, wlcUuid, type = 'table') {
   return false;
 }
 
+/**
+ * Resolves the WLC device UUID for a given wireless client MAC.
+ * First checks the topology nodes in the client detail response;
+ * falls back to looking up the WLC via the associated AP if not found directly.
+ * @param {string} mac - client MAC address
+ * @returns {string|undefined} WLC device UUID, or undefined if not found
+ */
 async function getWlcForMac(mac) {
   var wlcUuid = undefined;
   const data = await getRequest(clientUrl.replace('<MAC>', mac));
@@ -553,6 +587,11 @@ async function getWlcForMac(mac) {
   return wlcUuid;
 }
 
+/**
+ * Resolves the AP name for a given BSSID MAC address.
+ * @param {string} bssid - AP BSSID in colon-separated format
+ * @returns {string|undefined} AP name, or undefined if not a Unified AP
+ */
 async function getAPNameForBssid(bssid) {
   const deviceDetail = await getRequest(networkDeviceMACUrl.replace("<MAC>", bssid));
   if (deviceDetail?.response[0]?.family && deviceDetail?.response[0]?.family == "Unified AP") {
@@ -561,6 +600,13 @@ async function getAPNameForBssid(bssid) {
   }
 }
 
+/**
+ * Executes CLI commands on a device via the Catalyst Center Command Runner.
+ * Submits the command, polls the resulting task, then fetches and returns the file output.
+ * @param {string} deviceUuid - device UUID to run commands on
+ * @param {string[]} commands - list of CLI commands to execute
+ * @returns {string|undefined} raw text output from the command, or undefined on failure
+ */
 async function commandRunnerForDevice(deviceUuid, commands) {
   const payload = {
     "description": "Catalyst Center Assistant running Command Runner",
@@ -597,7 +643,7 @@ async function commandRunnerForDevice(deviceUuid, commands) {
   }
 
   //loading file
-  const fileData = await getRequest(fileUrl.replace("<FILE-ID>", fileId), returnAsText = true);
+  const fileData = await getRequest(fileUrl.replace("<FILE-ID>", fileId), 'text');
   if (!fileData) {
     updateStatus("No Data in Response found", isError = true);
     return;
@@ -605,6 +651,11 @@ async function commandRunnerForDevice(deviceUuid, commands) {
   return fileData;
 }
 
+/**
+ * Enriches a WLC scan report by resolving each unique BSSID to an AP name,
+ * then renders the result table.
+ * @param {object[]} scanReportList - parsed scan report entries from the WLC
+ */
 async function enhanceAndRenderWLCScanReport(scanReportList) {
   const bssid_ap_map = {};
   const unique_bssid = Array.from(
@@ -634,6 +685,10 @@ async function enhanceAndRenderWLCScanReport(scanReportList) {
 }
 
 // Device360 / DeviceDetails
+/**
+ * Loads the configuration archive for a device and renders it as a table.
+ * @param {string} deviceUuid - device UUID in Catalyst Center
+ */
 async function loadConfigArchive(deviceUuid) {
   updateStatus("Loading config archive of device...");
   cleanTable();
@@ -655,6 +710,7 @@ async function loadConfigArchive(deviceUuid) {
   }
 }
 
+
 /**
  * Function called as part of Button Event Listener
  * to download file.
@@ -663,40 +719,105 @@ async function downloadConfigFileVersion(btn, deviceUuid, versionId, fileId, dev
   btn.disabled = true;
   btn.textContent = '⏳...';
   const downloadUrl = `/api/v1/archive-config/network-device/${deviceUuid}/version/${versionId}/file/${fileId}?processed=true`;
-  const fileData = await getRequest(downloadUrl, returnAsText = true);
+  const fileData = await getRequest(downloadUrl, 'text');
   if (!fileData) {
     updateStatus("No Data in Response found", isError = true);
+    btn.disabled = false;
+    btn.textContent = '💾';
     return;
   }
   try {
-    const blob = new Blob([fileData], { type: 'text/plain' });
-    const blobUrl = URL.createObjectURL(blob);
-
-    // Trigger the download
-    const tempLink = document.createElement('a');
     const time = formatTime(timestamp, 'yyyy-mm-dd_hh-MM');
-    const fileName = `${deviceName}_${time}_${type}.cfg`;
-    tempLink.href = blobUrl;
-    tempLink.download = fileName;
-    document.body.appendChild(tempLink);
-    tempLink.click();
-
-    // Cleanup
-    document.body.removeChild(tempLink);
-    URL.revokeObjectURL(blobUrl);
-
-
+    const blob = new Blob([fileData], { type: 'text/plain' });
+    triggerBlobDownload(blob, `${deviceName}_${time}_${type}.cfg`);
   } catch (error) {
     console.error('Download failed:', error);
     updateStatus("Error during download", true);
   } finally {
-    // 4. Re-enable button and restore original icon/text
     btn.disabled = false;
     btn.textContent = '💾';
   }
 }
 
+/**
+ * Flattens a config archive device entry into a flat array of version records
+ * suitable for table rendering, including startup and running config file IDs.
+ * @param {object} deviceEntry - a single entry from archiveResultlist
+ * @returns {object[]} flat list of version records
+ */
+function flattenArchiveResponse(deviceEntry = {}) {
+  const { deviceId, deviceName, ipAddress, versions = [] } = deviceEntry;
+
+  return versions.map(version => {
+    const fileMap = Object.fromEntries(
+      (version.files || []).map(file => [file.fileType, file])
+    );
+
+    return {
+      deviceId: deviceId ?? null,
+      deviceName: deviceName ?? null,
+      ipAddress: ipAddress ?? null,
+      versionId: version.id ?? null,
+      createdTime: version.createdTime ?? null,
+      startupFileId: fileMap.STARTUPCONFIG?.fileId ?? null,
+      startupChangeMagnitude: fileMap.STARTUPCONFIG?.changeMagnitude ?? null,
+      runningFileId: fileMap.RUNNINGCONFIG?.fileId ?? null,
+      runningChangeMagnitude: fileMap.RUNNINGCONFIG?.changeMagnitude ?? null,
+      userName: version.syslogConfigEventDto?.userName ?? null
+    };
+  });
+}
+
+/**
+ * Returns an icon, color, and label representing a config change magnitude value.
+ * @param {string} magnitudeStr - magnitude as a string (e.g. '0', '3.5', '12')
+ * @returns {{icon: string, color: string, label: string}}
+ */
+function getMagnitudeIcon(magnitudeStr) {
+  const value = Number.parseFloat(magnitudeStr ?? '0'); // safe parse
+  if (Number.isNaN(value)) {
+    return { icon: '⚪ NaN', color: '#9ea1b4', label: 'Unknown' };
+  }
+
+  if (value === 0) {
+    return { icon: '🟢 No Change', color: '#22c55e', label: 'No change' };
+  }
+
+  if (value < 5) {
+    return { icon: '🟡 Minor', color: '#facc15', label: 'Minor change' };
+  }
+
+  if (value < 10) {
+    return { icon: '🟠 Moderate', color: '#fb923c', label: 'Moderate change' };
+  }
+
+  return { icon: '🔴 Major', color: '#f87171', label: 'Major change' };
+}
+
+/**
+ * Creates a 💾 button that triggers a config file download when clicked.
+ * @param {string} deviceUuid - device UUID
+ * @param {string} version - version ID of the archive
+ * @param {string} fileId - file ID to download
+ * @param {string} deviceName - device name used in the filename
+ * @param {string} type - 'startup' or 'running'
+ * @param {number} timestamp - creation timestamp (epoch ms) used in the filename
+ * @returns {HTMLButtonElement}
+ */
+function getFileDownloadButton(deviceUuid, version, fileId, deviceName, type, timestamp) {
+  const btn = document.createElement('button');
+  btn.innerHTML = '💾';
+  btn.addEventListener('click', () => {
+    downloadConfigFileVersion(btn, deviceUuid, version, fileId, deviceName, type, timestamp);
+  });
+  return btn;
+}
+
+
 // Activity Tasks
+/**
+ * Fetches the latest failed provisioning jobs and renders them as a table.
+ */
 async function loadFailedJobs() {
   updateStatus("Loading failed jobs...");
   cleanTable();
@@ -708,6 +829,12 @@ async function loadFailedJobs() {
   }
 }
 
+/**
+ * Loads the deployment details for a specific activity/job instance.
+ * Handles both TEMPLATES (shows per-device deploy status + CSV export)
+ * and DEVICES (informs user to use the GUI).
+ * @param {string} activityInstanceUuid - the instanceUuid of the scheduled job
+ */
 async function loadJobDetails(activityInstanceUuid) {
   updateStatus("Loading job details...");
   cleanTable();
@@ -782,6 +909,12 @@ async function loadJobDetails(activityInstanceUuid) {
   }
 }
 
+/**
+ * Exports deployment device results as a CSV file download.
+ * @param {string} jobName - template job name
+ * @param {string} startTime - job start time string
+ * @param {object[]} devices - array of device result objects
+ */
 function exportDeployDetailsCSV(jobName, startTime, devices) {
   const rows = [['Execution Time', 'Job Name', 'Device Name', 'IP Address', 'Status']];
   devices.forEach(d => rows.push([startTime, jobName, d.name, d.ipAddress, d.status]));
@@ -797,67 +930,132 @@ function exportDeployDetailsCSV(jobName, startTime, devices) {
   URL.revokeObjectURL(blobUrl);
 }
 
-function flattenArchiveResponse(deviceEntry = {}) {
-  const { deviceId, deviceName, ipAddress, versions = [] } = deviceEntry;
+// Client 360 Intelligent Capture / Packet Capture Download
 
-  return versions.map(version => {
-    const fileMap = Object.fromEntries(
-      (version.files || []).map(file => [file.fileType, file])
-    );
+/**
+ * Fetches basic client info (hostname, IP, identifier) and displays it
+ * in the airsense section header.
+ * @param {string} mac - client MAC address
+ */
+async function loadAirsenseClientInfo(mac) {
+  const data = await getRequest(clientUrl.replace('<MAC>', mac));
+  const hostname = data?.detail?.hostName ?? 'N/A';
+  const identifier = data?.detail?.identifier ?? 'N/A';
+  const ip = data?.detail?.hostIpV4 ?? 'N/A';
+  document.getElementById('airsense-client-info').textContent = `${identifier} | ${mac} | ${ip} | ${hostname}`;
+}
 
-    return {
-      deviceId: deviceId ?? null,
-      deviceName: deviceName ?? null,
-      ipAddress: ipAddress ?? null,
-      versionId: version.id ?? null,
-      createdTime: version.createdTime ?? null,
-      startupFileId: fileMap.STARTUPCONFIG?.fileId ?? null,
-      startupChangeMagnitude: fileMap.STARTUPCONFIG?.changeMagnitude ?? null,
-      runningFileId: fileMap.RUNNINGCONFIG?.fileId ?? null,
-      runningChangeMagnitude: fileMap.RUNNINGCONFIG?.changeMagnitude ?? null,
-      userName: version.syslogConfigEventDto?.userName ?? null
-    };
+/**
+ * Sets the airsense start/end datetime inputs.
+ * End time is set to now; start time is set to now minus the given duration.
+ * @param {number} durationMs - duration in milliseconds to look back from now
+ */
+function setAirsenseTimeRange(durationMs) {
+  const now = Date.now();
+  document.getElementById('airsense-end').value = formatTime(now, 'yyyy-mm-ddThh:MM');
+  document.getElementById('airsense-start').value = formatTime(now - durationMs, 'yyyy-mm-ddThh:MM');
+}
+
+/**
+ * Button handler for the AirSense PCAP download button.
+ * Validates the selected time range and delegates to downloadAirSensePcap.
+ */
+async function handleAirsenseDownload() {
+  updateStatus("Preparing PCAP download...");
+  displayErrorMessage("");
+  errorState = false;
+
+  timeout = setTimeout(() => {
+    displayErrorMessage("Request not successful after " + timeoutDuration / 1000 + " seconds.");
+  }, timeoutDuration);
+
+  chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+    const activeTab = tabs[0];
+    const urlParams = new URLSearchParams(new URL(activeTab.url).search);
+    const mac = urlParams.get('macAddress');
+    if (!mac) {
+      updateStatus("Could not determine client MAC", isError = true);
+      clearTimeout(timeout);
+      return;
+    }
+    if (host && token) {
+      const startVal = document.getElementById('airsense-start').value;
+      const endVal = document.getElementById('airsense-end').value;
+      const startTime = new Date(startVal).getTime();
+      const endTime = new Date(endVal).getTime();
+      if (!startVal || !endVal || isNaN(startTime) || isNaN(endTime)) {
+        updateStatus("Invalid time range", isError = true);
+        clearTimeout(timeout);
+        return;
+      }
+      if (startTime >= endTime) {
+        updateStatus("Start time must be before end time", isError = true);
+        clearTimeout(timeout);
+        return;
+      }
+      await downloadAirSensePcap(mac, startTime, endTime);
+    } else {
+      updateStatus("Token or Host undefined", isError = true);
+    }
+    clearTimeout(timeout);
   });
 }
 
-function getMagnitudeIcon(magnitudeStr) {
-  const value = Number.parseFloat(magnitudeStr ?? '0'); // safe parse
-  if (Number.isNaN(value)) {
-    return { icon: '⚪ NaN', color: '#9ea1b4', label: 'Unknown' };
-  }
+/**
+ * Downloads an AirSense onboarding packet capture for the given client and time range.
+ * Saves the file as icap_onboarding_<mac>_<endtime>.pcap.
+ * @param {string} mac - client MAC address
+ * @param {number} startTime - start of capture window (epoch ms)
+ * @param {number} endTime - end of capture window (epoch ms)
+ */
+async function downloadAirSensePcap(mac, startTime, endTime) {
+  updateStatus("Downloading PCAP...");
+  const btn = document.getElementById('airsense-action1');
+  btn.disabled = true;
+  btn.textContent = '⏳...';
 
-  if (value === 0) {
-    return { icon: '🟢 No Change', color: '#22c55e', label: 'No change' };
+  const urlpath = airsensePcapUrl
+    .replace('<MAC>', encodeURIComponent(mac))
+    .replace('<START>', startTime)
+    .replace('<END>', endTime);
+  const blob = await getRequest(urlpath, 'blob');
+  if (!blob) {
+    updateStatus("No PCAP data received", isError = true);
+    btn.disabled = false;
+    btn.textContent = '⬇ Download PCAP';
+    return;
   }
-
-  if (value < 5) {
-    return { icon: '🟡 Minor', color: '#facc15', label: 'Minor change' };
+  try {
+    const safeMac = mac.replace(/:/g, '-');
+    const time = formatTime(endTime, 'yyyy-mm-dd_hh-MM');
+    triggerBlobDownload(blob, `icap_onboarding_${safeMac}_${time}.pcap`);
+    updateStatus("PCAP downloaded");
+  } catch (error) {
+    console.error('Download failed:', error);
+    updateStatus("Error during download", true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⬇ Download PCAP';
   }
-
-  if (value < 10) {
-    return { icon: '🟠 Moderate', color: '#fb923c', label: 'Moderate change' };
-  }
-
-  return { icon: '🔴 Major', color: '#f87171', label: 'Major change' };
 }
-
-function getFileDownloadButton(deviceUuid, version, fileId, deviceName, type, timestamp) {
-  const btn = document.createElement('button');
-  btn.innerHTML = '💾';
-  btn.addEventListener('click', () => {
-    downloadConfigFileVersion(btn, deviceUuid, version, fileId, deviceName, type, timestamp);
-  });
-  return btn;
-}
-
 
 // Helper functions for Popup
+/**
+ * Clears the table container and the render timestamp.
+ */
 function cleanTable() {
   const container = document.getElementById('table-container');
   container.textContent = "";
   updateRenderTimestamp('');
 }
 
+/**
+ * Renders an array of data objects as an HTML table in the table container.
+ * The columns shown depend on the type parameter.
+ * @param {object[]} data - array of data records to display
+ * @param {string} type - table layout type: 'catc-scan' | 'wlc-scan' | 'catc-disconnect' |
+ *                        'config-archive' | 'job-list' | 'job-details'
+ */
 function renderResponseTable(data, type = "catc-scan") {
   let keysToDisplay;
   let keysToDisplayNames;
@@ -946,8 +1144,14 @@ function renderResponseTable(data, type = "catc-scan") {
 
 }
 
-
-
+/**
+ * Formats a timestamp into a string using a token-based format.
+ * Supported tokens: yyyy, mm, m, dd, d, hh, h, MM, M, ss, s.
+ * Default format: 'yyyy-mm-dd hh:MM:ss'.
+ * @param {number|string|Date} time - the timestamp to format
+ * @param {string} [format] - format string with tokens
+ * @returns {string} formatted date/time string
+ */
 function formatTime(time, format) {
   time = typeof time == 'number' ? new Date(time) : time;
   time = typeof time == 'string' ? new Date(time) : time;
@@ -978,6 +1182,10 @@ function formatTime(time, format) {
   return format;
 }
 
+/**
+ * Resizes the popup body to at most 1/3 of the screen dimensions,
+ * capped at 800×600px.
+ */
 function resizePopup() {
   // Get the current window size
   const screenWidth = window.screen.width;
@@ -994,6 +1202,11 @@ function resizePopup() {
   document.body.style.height = `${popupHeight}px`;
 }
 
+/**
+ * Updates the status text and last-update timestamp in the header.
+ * @param {string} message - status message to display
+ * @param {boolean} isError - if true, applies error styling to the status text
+ */
 function updateStatus(message, isError = false) {
   const status = document.getElementById('statusText');
   if (isError) {
@@ -1009,12 +1222,20 @@ function updateStatus(message, isError = false) {
   lastUpdateElement.textContent = `Last update: ${timestamp}`;
 }
 
+/**
+ * Updates the host label in the header.
+ * @param {string} hostname - the Catalyst Center hostname or IP:port
+ */
 function updateHost(hostname) {
   const host = document.getElementById('host');
   host.textContent = "Host: " + hostname;
 
 }
 
+/**
+ * Displays or clears the error message banner in the footer.
+ * @param {string} message - error text to show; pass empty string to clear
+ */
 function displayErrorMessage(message = "") {
   const footer = document.getElementById('errorMessage');
   footer.textContent = message;
@@ -1026,16 +1247,30 @@ function displayErrorMessage(message = "") {
   }
 }
 
+/**
+ * Updates the render timestamp label below the table.
+ * @param {string} timestamp - formatted timestamp string, or empty to clear
+ */
 function updateRenderTimestamp(timestamp) {
   const footer = document.getElementById('updatetimestamp');
   footer.textContent = timestamp;
 }
 
+/**
+ * Returns the current local time as a locale-formatted string.
+ * @returns {string}
+ */
 function getCurrentTime() {
   const now = new Date();
   return now.toLocaleTimeString(); // Returns the current time in a readable format
 }
 
+/**
+ * Converts a MAC address to Cisco WLC dot notation (e.g. 1234.5678.ABCD).
+ * Accepts colon-separated, dash-separated, or already dot-separated formats.
+ * @param {string} macAddress - MAC in any supported format
+ * @returns {string|false} MAC in WLC dot notation, or false if format is unrecognized
+ */
 function convertMacAddressForWLC(macAddress) {
   // Regular expressions for both valid MAC address formats
   const colonSeparatedRegex = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
@@ -1055,7 +1290,12 @@ function convertMacAddressForWLC(macAddress) {
   }
 }
 
-// Parse the client_wsa_info record containint Scan report
+/**
+ * Parses the raw WLC client_wsa_info table record output into an array of
+ * scan report measurement objects (bssid, channel, rssi, snr, received_time).
+ * @param {string} inputString - raw text output from the WLC Command Runner
+ * @returns {object[]} array of measurement entries, empty if no data found
+ */
 function parseTableRecord(inputString) {
   // Check if the input contains 'Table Record Index'
   if (!inputString.includes('Table Record Index')) {
@@ -1104,8 +1344,15 @@ function parseTableRecord(inputString) {
 }
 
 // REQUESTS
-async function urlRequest(url, method, returnAsText = false) {
-  // Default options are marked with *
+/**
+ * Core fetch wrapper used by all API calls.
+ * Handles error responses and returns the body in the requested format.
+ * @param {string} url - full URL to request
+ * @param {string} method - HTTP method ('GET', 'POST', etc.)
+ * @param {'json'|'text'|'blob'} responseType - how to parse the response body
+ * @returns {object|string|Blob|undefined} parsed response, or undefined on failure
+ */
+async function urlRequest(url, method, responseType = 'json') {
   try {
     let response = await fetch(url, {
       method: method,
@@ -1130,11 +1377,9 @@ async function urlRequest(url, method, returnAsText = false) {
       updateStatus("No Data was returned");
       return ({ response: [] });
     }
-    if (returnAsText) {
-      return response.text();
-    }
+    if (responseType === 'blob') return response.blob();
+    if (responseType === 'text') return response.text();
     return response.json();
-    //return response.json(); // parses JSON response into native JavaScript objects
   } catch (error) {
     console.error('There was a problem with the URL operation:', error);
     displayErrorMessage(error.message);
@@ -1143,14 +1388,47 @@ async function urlRequest(url, method, returnAsText = false) {
   }
 }
 
+/**
+ * Sends a POST request to the given absolute URL.
+ * @param {string} url - full URL
+ * @returns {object|undefined}
+ */
 async function postRequest(url = "") {
   return urlRequest(url, "POST");
 }
 
-async function getRequest(urlpath = "", returnAsText = false) {
-  return await urlRequest("https://" + host + urlpath, "GET", returnAsText);
+/**
+ * Sends an authenticated GET request to a Catalyst Center API path.
+ * @param {string} urlpath - API path (e.g. '/dna/intent/api/v1/...')
+ * @param {'json'|'text'|'blob'} responseType - how to parse the response
+ * @returns {object|string|Blob|undefined}
+ */
+async function getRequest(urlpath = "", responseType = 'json') {
+  return await urlRequest("https://" + host + urlpath, "GET", responseType);
 }
 
+/**
+ * Trigger a file download from a Blob object.
+ * @param {Blob} blob - the data to download
+ * @param {string} fileName - the file name to save as
+ */
+function triggerBlobDownload(blob, fileName) {
+  const blobUrl = URL.createObjectURL(blob);
+  const tempLink = document.createElement('a');
+  tempLink.href = blobUrl;
+  tempLink.download = fileName;
+  document.body.appendChild(tempLink);
+  tempLink.click();
+  document.body.removeChild(tempLink);
+  URL.revokeObjectURL(blobUrl);
+}
+
+/**
+ * Sends an authenticated POST request with a JSON body to a Catalyst Center API path.
+ * @param {string} urlpath - API path
+ * @param {object} data - request payload
+ * @returns {object|undefined} parsed JSON response
+ */
 async function postData(urlpath = "", data = {}) {
   const url = "https://" + host + urlpath;
 
@@ -1186,6 +1464,11 @@ async function postData(urlpath = "", data = {}) {
   }
 }
 
+/**
+ * Polls a Catalyst Center task until it finishes or the retry limit is reached.
+ * @param {string} taskId - task ID returned by a command runner or provisioning call
+ * @returns {object|false} task status response when complete, or false on timeout
+ */
 async function checkTaskProgress(taskId) {
   /*
 {
@@ -1226,35 +1509,55 @@ async function checkTaskProgress(taskId) {
   return false;
 }
 
-// Define a sleep function that returns a Promise
+/**
+ * Returns a Promise that resolves after the given number of milliseconds.
+ * @param {number} ms - delay in milliseconds
+ */
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Shows the login section and hides all action sections.
+ */
 function showLogin() {
   document.getElementById('info-section').style.display = 'none'
   document.getElementById('login-section').style.display = 'block'
   document.getElementById('action-section').style.display = 'none'
   document.getElementById('device-action-section').style.display = 'none'
   document.getElementById('activity-action-section').style.display = 'none'
+  document.getElementById('airsense-action-section').style.display = 'none'
 }
 
+/**
+ * Shows the Client Analytics action section and hides all others.
+ */
 function showActionButton() {
   displayErrorMessage();
   document.getElementById('info-section').style.display = 'none'
   document.getElementById('login-section').style.display = 'none'
   document.getElementById('action-section').style.display = 'flex'
   document.getElementById('device-action-section').style.display = 'none'
+  document.getElementById('activity-action-section').style.display = 'none'
+  document.getElementById('airsense-action-section').style.display = 'none'
 }
 
+/**
+ * Shows the Device Config Archive action section and hides all others.
+ */
 function showDeviceActionButton() {
   displayErrorMessage();
   document.getElementById('info-section').style.display = 'none'
   document.getElementById('login-section').style.display = 'none'
   document.getElementById('action-section').style.display = 'none'
   document.getElementById('device-action-section').style.display = 'flex'
+  document.getElementById('activity-action-section').style.display = 'none'
+  document.getElementById('airsense-action-section').style.display = 'none'
 }
 
+/**
+ * Shows the Activity Tasks action section and hides all others.
+ */
 function showActivityActionButton() {
   displayErrorMessage();
   document.getElementById('info-section').style.display = 'none'
@@ -1262,4 +1565,22 @@ function showActivityActionButton() {
   document.getElementById('action-section').style.display = 'none'
   document.getElementById('device-action-section').style.display = 'none'
   document.getElementById('activity-action-section').style.display = 'flex'
+  document.getElementById('airsense-action-section').style.display = 'none'
+}
+
+/**
+ * Shows the AirSense Packet Capture section and hides all others.
+ * Pre-fills the time range to the last 1 hour and loads client info.
+ * @param {string} mac - client MAC address from the URL parameter
+ */
+function showAirsenseActionButton(mac) {
+  displayErrorMessage();
+  document.getElementById('info-section').style.display = 'none'
+  document.getElementById('login-section').style.display = 'none'
+  document.getElementById('action-section').style.display = 'none'
+  document.getElementById('device-action-section').style.display = 'none'
+  document.getElementById('activity-action-section').style.display = 'none'
+  document.getElementById('airsense-action-section').style.display = 'flex'
+  setAirsenseTimeRange(60 * 60 * 1000);
+  loadAirsenseClientInfo(mac);
 }

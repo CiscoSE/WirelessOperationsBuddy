@@ -45,6 +45,22 @@
         </span>
         <button class="button button-secondary" id="activity-action1">Load Failed Jobs</button>
       </div>
+      <div id="airsense-action-section" class="actions airsense-actions" style="display:none;">
+        <span class="status">
+          <h2>Onboarding Packet Captures</h2>
+        </span>
+        <div id="airsense-client-info" class="status"></div>
+        <div class="airsense-timerange">
+          <label>Start: <input type="datetime-local" id="airsense-start"></label>
+          <label>End: <input type="datetime-local" id="airsense-end"></label>
+        </div>
+        <div class="airsense-quickbtns">
+          <button class="button button-secondary" id="airsense-quick-30m">30 min</button>
+          <button class="button button-secondary" id="airsense-quick-1h">1 h</button>
+          <button class="button button-secondary" id="airsense-quick-5h">5 h</button>
+        </div>
+        <button class="button button-primary" id="airsense-action1">⬇ Download PCAP</button>
+      </div>
     </actions>
     <content>
       <div id="content">

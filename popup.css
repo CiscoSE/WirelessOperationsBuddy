@@ -163,3 +163,44 @@ input[type="password"] {
 .button-secondary:hover {
     background-color: #4a86c5c7;
 }
+
+.airsense-actions {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.airsense-timerange {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    align-items: center;
+    gap: 6px 8px;
+    font-size: 0.85em;
+    width: 50%;
+    align-self: center;
+}
+
+.airsense-timerange label {
+    display: contents;
+}
+
+.airsense-timerange input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.airsense-quickbtns {
+    display: flex;
+    gap: 6px;
+    width: 100%;
+}
+
+.airsense-quickbtns .button {
+    width: auto;
+    flex: 1;
+    padding: 4px 2px;
+}
+
+#airsense-action1 {
+    align-self: center;
+    width: 60%;
+}
