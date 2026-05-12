@@ -6,13 +6,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script type="text/javascript" src="popup.js"></script>
   <link rel="stylesheet" type="text/css" href="popup.css">
-  <title>Wireless Operations Buddy</title>
+  <title>Operations Buddy</title>
 </head>
 
 <body>
   <!-- Header Section -->
   <header>
-    <h1>Wireless Operations Buddy</h1>
+    <h1>Operations Buddy</h1>
     <div class="status-container">
       <span class="status" id="host">Host: N/A</span><br />
       <span class="status" id="statusText">Status: N/A</span><br />
@@ -71,8 +71,29 @@
     <content>
       <div id="content">
         <div id="info-section">
-          <h1>Please navigate to a Client360 or Device360 view</h1>
-          <h2>I can only provide assistance on Client or Device 360 page within Cisco Catalyst Center.</h2>
+          <h2>I'm able to assist with Cisco Catalyst Center</h2>
+          <ul class="capability-list">
+            <li>
+              <strong>Client360</strong>
+              <span>Retrieve Client Analytics (Apple, Intel, Samsung) data, also fetch current WLC state of it or send
+                radio measurement requests directly. Additionally assist in downloading Onboarding Packet Captures from
+                Intelligent Capture page.</span>
+            </li>
+            <li>
+              <strong>Device360</strong>
+              <span>Load and inspect device configuration archives from the Device Assurance or Provisioning
+                view.</span>
+            </li>
+            <li>
+              <strong>Activity Tasks</strong>
+              <span>Surface and review bulk failed provisioning jobs from the Activity Tasks page that have been
+                triggered from the CLI Templates.</span>
+            </li>
+            <li>
+              <strong>Network Hierarchy</strong>
+              <span>View network profiles assigned to a selected site.</span>
+            </li>
+          </ul>
         </div>
         <div id="login-section" class="login" style="display:none;">
           <input type="text" id="username" placeholder="Username">
