@@ -25,7 +25,8 @@ const buddyURLs = {
   'clientDetailUrl': '/dna/assurance/client/details',
   'deviceAssuranceUrl': '/dna/assurance/device/details',
   'deviceProvisioningUrl': '/dna/provision/devices/inventory/device-details',
-  'activityTaskUrl': '/dna/activity/tasks'
+  'activityTaskUrl': '/dna/activity/tasks',
+  'networkHierarchyUrl': '/dna/design/networkHierarchy'
 }
 
 const tokenURL = 'https://<HOST>/api/system/v1/auth/token';
@@ -43,6 +44,9 @@ const scheduledJobBriefUrl = '/api/schedule/v4/scheduled-job/brief?type=DEFAULT,
 const deployStatusUrl = '/api/v1/template-programmer/deploy/status/<DEPLOY-ID>';
 const activityInstanceUrl = '/api/schedule/v4/scheduled-job?taskId=<ACTIVITY-ID>';
 const airsensePcapUrl = '/api/assurance/v1/airsense/packetcaptures?type=airsense_packets_timerange&macAddress=<MAC>&startTime=<START>&endTime=<END>';
+const siteProfileAssignmentsUrl = '/dna/intent/api/v1/sites/<SITE-ID>/profileAssignments';
+const networkProfileForSiteUrl = '/dna/intent/api/v1/networkProfilesForSites/<PROFILE-ID>';
+const wirelessProfileUrl = '/dna/intent/api/v1/wireless/profile?profileName=<PROFILE-NAME>';
 
 var responsePending = false;
 var timeout = null;
@@ -81,6 +85,7 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('device-action1').addEventListener('click', handleDeviceDetails);
   document.getElementById('activity-action1').addEventListener('click', handleActivityTasks);
   document.getElementById('airsense-action1').addEventListener('click', handleAirsenseDownload);
+  document.getElementById('network-profile-action1').addEventListener('click', handleNetworkProfileDetails);
   document.getElementById('airsense-quick-30m').addEventListener('click', () => setAirsenseTimeRange(30 * 60 * 1000));
   document.getElementById('airsense-quick-1h').addEventListener('click', () => setAirsenseTimeRange(60 * 60 * 1000));
   document.getElementById('airsense-quick-5h').addEventListener('click', () => setAirsenseTimeRange(5 * 60 * 60 * 1000));
@@ -209,6 +214,42 @@ function handleActivityTasks(event) {
   });
 }
 
+/**
+ * Button handler for Network Profile actions.
+ * Extracts the selectedSite from the URL and loads assigned wireless profiles.
+ * @param {Event} event - the click event from the action button
+ */
+function handleNetworkProfileDetails(event) {
+  updateStatus("Validating request...");
+  displayErrorMessage("");
+  errorState = false;
+
+  timeout = setTimeout(() => {
+    displayErrorMessage("Request not successful after " + timeoutDuration / 1000 + " seconds.");
+  }, timeoutDuration);
+
+  chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+    const activeTab = tabs[0];
+    const url = activeTab.url;
+    const urlParams = new URLSearchParams(new URL(url).search);
+    if (url.includes(buddyURLs.networkHierarchyUrl)) {
+      if (host && token) {
+        const siteId = urlParams.get('selectedSite');
+        if (!siteId) {
+          updateStatus("No site selected. Please select a site first.", isError = true);
+        } else {
+          await loadNetworkProfile(siteId);
+        }
+      } else {
+        updateStatus("Token or Host undefined", isError = true);
+      }
+    } else {
+      updateStatus("Please Go To Network Hierarchy Page");
+    }
+    clearTimeout(timeout);
+  });
+}
+
 // Listener for receiving message to PopUp
 chrome.runtime.onMessage.addListener(
   function (request, sender, sendResponse) {
@@ -258,6 +299,8 @@ function showActions() {
       showActionButton();
     } else if (url.includes(buddyURLs.activityTaskUrl)) {
       showActivityActionButton();
+    } else if (url.includes(buddyURLs.networkHierarchyUrl)) {
+      showNetworkProfileActionButton();
     } else {
       showDeviceActionButton();
     }
@@ -684,6 +727,72 @@ async function enhanceAndRenderWLCScanReport(scanReportList) {
   renderResponseTable(scanReportList, type = "wlc-scan");
 }
 
+// Network Hierarchy / Profile Assignments
+/**
+ * Loads and renders network profiles assigned to a site.
+ * The table is built incrementally: the header appears immediately after
+ * assignments are fetched, then each row is appended as its API calls resolve.
+ * Wireless rows show a "Loading…" placeholder while the SSID call is in flight.
+ * @param {string} siteId - site UUID from the selectedSite URL parameter
+ */
+async function loadNetworkProfile(siteId) {
+  updateStatus("Loading profile assignments for site...");
+  cleanTable();
+
+  // Step 1: get all profile IDs assigned to the site
+  const assignmentsData = await getRequest(siteProfileAssignmentsUrl.replace('<SITE-ID>', siteId));
+  if (!assignmentsData?.response?.length) {
+    updateStatus("No profiles assigned to this site", isError = true);
+    return;
+  }
+
+  // Render the table header immediately so the user sees progress
+  const container = document.getElementById('table-container');
+  const table = document.createElement('table');
+  const headerRow = document.createElement('tr');
+  ['Type', 'Profile Name', 'SSIDs'].forEach(label => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headerRow.appendChild(th);
+  });
+  table.appendChild(headerRow);
+  container.appendChild(table);
+  updateStatus(`Found ${assignmentsData.response.length} assignment(s), loading details...`);
+
+  // Step 2+3: fire all profile fetches concurrently; each appends its row when ready
+  const fetches = assignmentsData.response.map(async (assignment) => {
+    const profileData = await getRequest(networkProfileForSiteUrl.replace('<PROFILE-ID>', assignment.id));
+    if (!profileData?.response) return;
+
+    const { name, type } = profileData.response;
+
+    const row = document.createElement('tr');
+    const typeCell = document.createElement('td');
+    typeCell.textContent = type ?? 'Unknown';
+    row.appendChild(typeCell);
+
+    const nameCell = document.createElement('td');
+    nameCell.textContent = name;
+    row.appendChild(nameCell);
+
+    const detailsCell = document.createElement('td');
+    detailsCell.style.whiteSpace = 'pre-line';
+    row.appendChild(detailsCell);
+    table.appendChild(row);
+
+    if (type?.toLowerCase() === 'wireless') {
+      detailsCell.textContent = '⏳ Loading...';
+      const wirelessData = await getRequest(wirelessProfileUrl.replace('<PROFILE-NAME>', encodeURIComponent(name)));
+      const ssidNames = wirelessData?.[0]?.profileDetails?.ssidDetails?.map(s => s.name) ?? [];
+      detailsCell.textContent = ssidNames.join('\n') || '(no SSIDs)';
+    }
+  });
+
+  await Promise.all(fetches);
+  updateRenderTimestamp("Result rendered@" + formatTime(Date.now()));
+  updateStatus("Details loaded");
+}
+
 // Device360 / DeviceDetails
 /**
  * Loads the configuration archive for a device and renders it as a table.
@@ -1084,6 +1193,10 @@ function renderResponseTable(data, type = "catc-scan") {
       keysToDisplay = ['name', 'ipAddress', 'status', 'detailedStatusMessage'];
       keysToDisplayNames = ['Device', 'IP', 'Status', 'Message'];
       break;
+    case 'network-profile':
+      keysToDisplay = ['type', 'profileName', 'details'];
+      keysToDisplayNames = ['Type', 'Profile Name', 'Details'];
+      break;
   }
 
 
@@ -1124,8 +1237,11 @@ function renderResponseTable(data, type = "catc-scan") {
             } else if (key.includes("FileId")) {
               const btn = getFileDownloadButton(item.deviceId, item.versionId, item[key], item.deviceName, (key.includes('startup') ? 'startup' : 'running'), item.createdTime);
               td.appendChild(btn);
+            } else if (key === 'details') {
+              td.style.whiteSpace = 'pre-line';
+              td.textContent = item[key] ?? '';
             } else {
-              td.textContent = item[key] !== undefined ? item[key] : ''; // Safely handle missing keys  
+              td.textContent = item[key] !== undefined ? item[key] : ''; // Safely handle missing keys
             }
           }
 
@@ -1527,6 +1643,7 @@ function showLogin() {
   document.getElementById('device-action-section').style.display = 'none'
   document.getElementById('activity-action-section').style.display = 'none'
   document.getElementById('airsense-action-section').style.display = 'none'
+  document.getElementById('network-profile-section').style.display = 'none'
 }
 
 /**
@@ -1540,6 +1657,7 @@ function showActionButton() {
   document.getElementById('device-action-section').style.display = 'none'
   document.getElementById('activity-action-section').style.display = 'none'
   document.getElementById('airsense-action-section').style.display = 'none'
+  document.getElementById('network-profile-section').style.display = 'none'
 }
 
 /**
@@ -1553,6 +1671,7 @@ function showDeviceActionButton() {
   document.getElementById('device-action-section').style.display = 'flex'
   document.getElementById('activity-action-section').style.display = 'none'
   document.getElementById('airsense-action-section').style.display = 'none'
+  document.getElementById('network-profile-section').style.display = 'none'
 }
 
 /**
@@ -1566,6 +1685,7 @@ function showActivityActionButton() {
   document.getElementById('device-action-section').style.display = 'none'
   document.getElementById('activity-action-section').style.display = 'flex'
   document.getElementById('airsense-action-section').style.display = 'none'
+  document.getElementById('network-profile-section').style.display = 'none'
 }
 
 /**
@@ -1581,6 +1701,21 @@ function showAirsenseActionButton(mac) {
   document.getElementById('device-action-section').style.display = 'none'
   document.getElementById('activity-action-section').style.display = 'none'
   document.getElementById('airsense-action-section').style.display = 'flex'
+  document.getElementById('network-profile-section').style.display = 'none'
   setAirsenseTimeRange(60 * 60 * 1000);
   loadAirsenseClientInfo(mac);
+}
+
+/**
+ * Shows the Network Profile action section and hides all others.
+ */
+function showNetworkProfileActionButton() {
+  displayErrorMessage();
+  document.getElementById('info-section').style.display = 'none'
+  document.getElementById('login-section').style.display = 'none'
+  document.getElementById('action-section').style.display = 'none'
+  document.getElementById('device-action-section').style.display = 'none'
+  document.getElementById('activity-action-section').style.display = 'none'
+  document.getElementById('airsense-action-section').style.display = 'none'
+  document.getElementById('network-profile-section').style.display = 'flex'
 }
